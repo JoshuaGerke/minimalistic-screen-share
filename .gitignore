@@ -1,0 +1,9 @@
+bin/
+*.exe
+*.log
+/dist/
+.vscode/
+.idea/
+packaging/pkg/
+packaging/src/
+*.pkg.tar.zst

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Minimalistic Screen Share
+GenericName=Screensharing
+Comment=Bildschirm und Ton teilen wie in Discord
+Exec=mss-share --settings
+Icon=video-display
+Terminal=false
+Categories=Network;AudioVideo;Utility;
+Keywords=screenshare;streaming;screen;discord;
+StartupNotify=false

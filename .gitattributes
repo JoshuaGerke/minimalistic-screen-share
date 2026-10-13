@@ -1,0 +1,6 @@
+# Einheitliche Zeilenenden im Repo, egal mit welchem Git das geklont wird.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.ico binary
+*.png binary
