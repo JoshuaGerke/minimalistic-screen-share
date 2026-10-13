@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ const (
 	joinWait       = 15 * time.Second
 	maxMessageSize = 8 << 20
 	sendQueue      = 128
+	maxPending     = 20
 	hostGrace      = 20 * time.Second
 )
 
@@ -45,10 +47,13 @@ type Server struct {
 }
 
 type room struct {
-	code    string
-	host    *client
-	viewers map[*client]struct{}
-	grace   *time.Timer
+	code       string
+	host       *client
+	viewers    map[*client]struct{}
+	pending    map[*client]struct{}
+	grace      *time.Timer
+	autoAccept bool
+	nextID     uint64
 }
 
 type client struct {
@@ -58,6 +63,7 @@ type client struct {
 	role string
 	name string
 	room *room
+	id   uint64
 
 	mu     sync.Mutex
 	closed bool
@@ -145,6 +151,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // join hängt den Client in den Raum ein und schickt die ersten Steuernachrichten.
+// Zuschauer landen erst in der Warteliste und werden vom Host freigegeben.
 func (s *Server) join(c *client, code string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,7 +163,11 @@ func (s *Server) join(c *client, code string) error {
 			return errors.New("Der Raum ist schon belegt")
 		}
 		if rm == nil {
-			rm = &room{code: code, viewers: map[*client]struct{}{}}
+			rm = &room{
+				code:    code,
+				viewers: map[*client]struct{}{},
+				pending: map[*client]struct{}{},
+			}
 			s.rooms[code] = rm
 		}
 		resume := rm.grace != nil
@@ -167,12 +178,23 @@ func (s *Server) join(c *client, code string) error {
 		rm.host = c
 		c.room = rm
 		c.enqueueControl(proto.Control{T: "joined", Room: code, N: len(rm.viewers)})
-		s.log.Printf("Raum %q: Host %s ist da (%d Zuschauer)", code, c.name, len(rm.viewers))
-		if resume {
-			if len(rm.viewers) > 0 {
-				s.broadcastLocked(rm, proto.Control{T: "live"})
-				s.log.Printf("Raum %q: Host wieder da", code)
+		s.log.Printf("Raum %q: Host %s ist da (%d Zuschauer, %d Anfragen)", code, c.name, len(rm.viewers), len(rm.pending))
+
+		if rm.autoAccept {
+			s.acceptAllLocked(rm)
+		} else {
+			// Wartende wissen lassen, dass der Host wieder da ist, und die
+			// offenen Anfragen erneut melden.
+			for p := range rm.pending {
+				p.enqueueControl(proto.Control{T: "waiting"})
+				c.enqueueControl(proto.Control{T: "knock", ID: p.id, Name: p.name})
 			}
+		}
+		if resume && len(rm.viewers) > 0 {
+			s.broadcastLocked(rm, proto.Control{T: "live"})
+			s.log.Printf("Raum %q: Host wieder da", code)
+		}
+		if resume {
 			s.sendViewersLocked(rm)
 		}
 		return nil
@@ -184,14 +206,31 @@ func (s *Server) join(c *client, code string) error {
 	if len(rm.viewers) >= s.cfg.MaxViewers {
 		return errors.New("Der Raum ist voll")
 	}
-	rm.viewers[c] = struct{}{}
+	if len(rm.pending) >= maxPending {
+		return errors.New("Zu viele offene Anfragen")
+	}
+
+	rm.nextID++
+	c.id = rm.nextID
 	c.room = rm
 	c.enqueueControl(proto.Control{T: "joined", Room: code, N: len(rm.viewers)})
 	if rm.host == nil {
 		c.enqueueControl(proto.Control{T: "reconnecting"})
 	}
-	s.log.Printf("Raum %q: Zuschauer %s dabei (%d)", code, c.name, len(rm.viewers))
-	s.sendViewersLocked(rm)
+
+	if rm.autoAccept && rm.host != nil {
+		rm.viewers[c] = struct{}{}
+		c.enqueueControl(proto.Control{T: "allowed"})
+		s.log.Printf("Raum %q: Zuschauer %s dabei (%d)", code, c.name, len(rm.viewers))
+		s.sendViewersLocked(rm)
+		return nil
+	}
+
+	rm.pending[c] = struct{}{}
+	if rm.host != nil {
+		rm.host.enqueueControl(proto.Control{T: "knock", ID: c.id, Name: c.name})
+	}
+	s.log.Printf("Raum %q: %s fragt an (%d offen)", code, c.name, len(rm.pending))
 	return nil
 }
 
@@ -207,14 +246,22 @@ func (s *Server) leave(c *client) {
 	}
 	if c.role == "host" && rm.host == c {
 		rm.host = nil
-		s.broadcastLocked(rm, proto.Control{T: "reconnecting"})
+		s.notifyLocked(rm, proto.Control{T: "reconnecting"})
 		code := rm.code
 		rm.grace = time.AfterFunc(s.cfg.HostGrace, func() { s.hostTimeout(code, rm) })
 		s.log.Printf("Raum %q: Host weg, warte %s auf Reconnect", code, s.cfg.HostGrace)
 	} else if c.role == "viewer" {
-		delete(rm.viewers, c)
-		s.log.Printf("Raum %q: Zuschauer %s raus (%d)", rm.code, c.name, len(rm.viewers))
-		s.sendViewersLocked(rm)
+		if _, ok := rm.pending[c]; ok {
+			delete(rm.pending, c)
+			if rm.host != nil {
+				rm.host.enqueueControl(proto.Control{T: "knock-gone", ID: c.id})
+			}
+			s.log.Printf("Raum %q: Anfrage von %s zurückgezogen", rm.code, c.name)
+		} else if _, ok := rm.viewers[c]; ok {
+			delete(rm.viewers, c)
+			s.log.Printf("Raum %q: Zuschauer %s raus (%d)", rm.code, c.name, len(rm.viewers))
+			s.sendViewersLocked(rm)
+		}
 	}
 	s.mu.Unlock()
 	c.close()
@@ -227,18 +274,89 @@ func (s *Server) hostTimeout(code string, rm *room) {
 		return
 	}
 	delete(s.rooms, code)
-	viewers := make([]*client, 0, len(rm.viewers))
+	all := make([]*client, 0, len(rm.viewers)+len(rm.pending))
 	for v := range rm.viewers {
-		viewers = append(viewers, v)
+		all = append(all, v)
+	}
+	for p := range rm.pending {
+		all = append(all, p)
 	}
 	rm.viewers = map[*client]struct{}{}
+	rm.pending = map[*client]struct{}{}
 	s.mu.Unlock()
 
-	for _, v := range viewers {
+	for _, v := range all {
 		v.enqueueControl(proto.Control{T: "ended"})
 		v.close()
 	}
 	s.log.Printf("Raum %q: geschlossen", code)
+}
+
+// allow entscheidet über eine offene Anfrage.
+func (s *Server) allow(host *client, id uint64, accept bool) {
+	s.mu.Lock()
+	rm := host.room
+	if rm == nil || rm.host != host {
+		s.mu.Unlock()
+		return
+	}
+	var target *client
+	for p := range rm.pending {
+		if p.id == id {
+			target = p
+			break
+		}
+	}
+	if target == nil {
+		s.mu.Unlock()
+		return
+	}
+	delete(rm.pending, target)
+	if accept {
+		rm.viewers[target] = struct{}{}
+		target.enqueueControl(proto.Control{T: "allowed"})
+		s.log.Printf("Raum %q: %s darf zuschauen (%d)", rm.code, target.name, len(rm.viewers))
+		s.sendViewersLocked(rm)
+	} else {
+		target.enqueueControl(proto.Control{T: "denied"})
+		s.log.Printf("Raum %q: %s abgelehnt", rm.code, target.name)
+	}
+	s.mu.Unlock()
+
+	if !accept {
+		target.close()
+	}
+}
+
+// setAutoAccept schaltet die automatische Freigabe um und lässt offene
+// Anfragen sofort durch, wenn eingeschaltet wird.
+func (s *Server) setAutoAccept(host *client, on bool) {
+	s.mu.Lock()
+	rm := host.room
+	if rm == nil || rm.host != host {
+		s.mu.Unlock()
+		return
+	}
+	rm.autoAccept = on
+	if on {
+		s.acceptAllLocked(rm)
+	}
+	s.mu.Unlock()
+	s.log.Printf("Raum %q: automatische Freigabe %v", rm.code, on)
+}
+
+// acceptAllLocked lässt alle wartenden Anfragen durch. Der Aufrufer muss
+// s.mu halten.
+func (s *Server) acceptAllLocked(rm *room) {
+	for p := range rm.pending {
+		rm.viewers[p] = struct{}{}
+		p.enqueueControl(proto.Control{T: "allowed"})
+	}
+	if len(rm.pending) > 0 {
+		s.log.Printf("Raum %q: %d offene Anfragen automatisch durchgelassen", rm.code, len(rm.pending))
+	}
+	rm.pending = map[*client]struct{}{}
+	s.sendViewersLocked(rm)
 }
 
 // relayBinary schickt ein Binärpaket vom Host an alle Zuschauer.
@@ -274,9 +392,26 @@ func (s *Server) broadcastLocked(rm *room, ctl proto.Control) {
 	}
 }
 
+// notifyLocked erreicht Zuschauer und wartende Anfragen – für Zustände wie
+// "Host ist weg" oder "Host ist wieder da", die alle angehen.
+func (s *Server) notifyLocked(rm *room, ctl proto.Control) {
+	data, _ := json.Marshal(ctl)
+	for v := range rm.viewers {
+		v.enqueue(data, true)
+	}
+	for p := range rm.pending {
+		p.enqueue(data, true)
+	}
+}
+
 // sendViewersLocked verteilt den aktuellen Zuschauerstand an alle im Raum.
 func (s *Server) sendViewersLocked(rm *room) {
-	data, _ := json.Marshal(proto.Control{T: "viewers", N: len(rm.viewers)})
+	names := make([]string, 0, len(rm.viewers))
+	for v := range rm.viewers {
+		names = append(names, v.name)
+	}
+	sort.Strings(names)
+	data, _ := json.Marshal(proto.Control{T: "viewers", N: len(rm.viewers), Names: names})
 	if rm.host != nil {
 		rm.host.enqueue(data, true)
 	}
@@ -313,6 +448,18 @@ func (c *client) readLoop() {
 			c.enqueueControl(proto.Control{T: "pong", TS: ctl.TS})
 		case "join":
 			// ist schon durch
+		case "allow":
+			if c.role == "host" {
+				c.srv.allow(c, ctl.ID, true)
+			}
+		case "deny":
+			if c.role == "host" {
+				c.srv.allow(c, ctl.ID, false)
+			}
+		case "auto":
+			if c.role == "host" {
+				c.srv.setAutoAccept(c, ctl.On)
+			}
 		default:
 			if c.role == "host" {
 				c.srv.relayControl(c, data)

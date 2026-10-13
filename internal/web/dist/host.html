@@ -67,7 +67,7 @@
 
     <div class="card">
       <h2>Teilen</h2>
-      <p class="muted small">Schick den Link an alle, die zuschauen sollen. Jeder mit dem Link kann zusehen – er ist das Passwort.</p>
+      <p class="muted small">Schick den Link oder die Sitzungs-ID an alle, die zuschauen sollen. Jeder Zuschauer muss einmal von dir freigegeben werden.</p>
       <div class="share-link">
         <input id="share-url" readonly>
         <button class="btn fixed" id="btn-copy" type="button">Kopieren</button>
@@ -79,6 +79,11 @@
     </div>
   </div>
 
+  <div class="card hidden" id="requests-card">
+    <h2>Anfragen</h2>
+    <div id="requests"></div>
+  </div>
+
   <div class="card">
     <h2>Einstellungen</h2>
     <div class="grid">
@@ -88,9 +93,9 @@
           <input id="cfg-server" placeholder="http://localhost:8080">
         </div>
         <div class="field">
-          <span>Raum</span>
+          <span>Sitzungs-ID (1 PC = 1 ID, damit finden dich andere)</span>
           <div class="row">
-            <input id="cfg-room" placeholder="z. B. joshua-live" maxlength="32" spellcheck="false">
+            <input id="cfg-room" placeholder="z. B. joshua-gerke-4f2a" maxlength="32" spellcheck="false">
             <button class="btn fixed" id="btn-new-room" type="button">Neu</button>
           </div>
         </div>
@@ -130,6 +135,7 @@
         <div class="field">
           <label class="check"><input type="checkbox" id="cfg-audio"> Systemton streamen</label>
           <label class="check"><input type="checkbox" id="cfg-cursor"> Mauszeiger zeigen</label>
+          <label class="check"><input type="checkbox" id="cfg-auto"> Zuschauer automatisch freigeben (ohne Nachfrage)</label>
         </div>
       </div>
     </div>

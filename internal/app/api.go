@@ -21,6 +21,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/api/targets", a.localOnly(a.handleTargets))
 	mux.HandleFunc("/api/start", a.localOnly(a.handleStart))
 	mux.HandleFunc("/api/stop", a.localOnly(a.handleStop))
+	mux.HandleFunc("/api/allow", a.localOnly(a.handleAllow))
+	mux.HandleFunc("/api/deny", a.localOnly(a.handleDeny))
 	mux.Handle("/", hostIndex(web.FS()))
 	return mux
 }
@@ -104,6 +106,34 @@ func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Stop()
+	writeJSON(w, http.StatusOK, a.Status())
+}
+
+// handleAllow/handleDeny entscheiden über eine Zuschaueranfrage.
+func (a *App) handleAllow(w http.ResponseWriter, r *http.Request) {
+	a.handleKnockDecision(w, r, a.Allow)
+}
+
+func (a *App) handleDeny(w http.ResponseWriter, r *http.Request) {
+	a.handleKnockDecision(w, r, a.Deny)
+}
+
+func (a *App) handleKnockDecision(w http.ResponseWriter, r *http.Request, decide func(uint64) error) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	var body struct {
+		ID uint64 `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "ungültige Anfrage: "+err.Error())
+		return
+	}
+	if err := decide(body.ID); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, a.Status())
 }
 

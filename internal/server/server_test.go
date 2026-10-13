@@ -86,7 +86,22 @@ func (p *peer) waitBinary() []byte {
 	}
 }
 
-func TestRelayFlow(t *testing.T) {
+func (p *peer) send(ctl proto.Control) {
+	p.t.Helper()
+	if err := p.conn.WriteJSON(ctl); err != nil {
+		p.t.Fatalf("senden: %v", err)
+	}
+}
+
+// sync schickt einen Ping und wartet auf das Pong: Damit ist sicher, dass
+// der Server alle vorherigen Nachrichten verarbeitet hat.
+func (p *peer) sync() {
+	p.t.Helper()
+	p.send(proto.Control{T: "ping", TS: 1})
+	p.waitControl("pong")
+}
+
+func TestRelayFlowWithApproval(t *testing.T) {
 	ts := newTestServer(t, 300*time.Millisecond, 8)
 
 	host := dial(t, ts, "test-raum", "host")
@@ -95,8 +110,16 @@ func TestRelayFlow(t *testing.T) {
 	viewer := dial(t, ts, "test-raum", "viewer")
 	viewer.waitControl("joined")
 
-	if ctl := host.waitControl("viewers"); ctl.N != 1 {
-		t.Fatalf("Zuschauerstand: %d, erwartet 1", ctl.N)
+	// Ohne Freigabe kommt nichts durch.
+	knock := host.waitControl("knock")
+	if knock.Name != "viewer" {
+		t.Fatalf("Anfrage von %q statt viewer", knock.Name)
+	}
+	host.send(proto.Control{T: "allow", ID: knock.ID})
+	viewer.waitControl("allowed")
+
+	if ctl := host.waitControl("viewers"); ctl.N != 1 || len(ctl.Names) != 1 || ctl.Names[0] != "viewer" {
+		t.Fatalf("Zuschauerstand falsch: %+v", ctl)
 	}
 
 	frame := proto.FramePacket(1, 42, 4, 4, []byte{0xFF, 0xD8, 0xFF, 0xD9})
@@ -107,9 +130,7 @@ func TestRelayFlow(t *testing.T) {
 		t.Fatalf("Frame nicht durchgereicht")
 	}
 
-	if err := host.conn.WriteJSON(proto.Control{T: "meta", W: 100, H: 50, FPS: 15}); err != nil {
-		t.Fatal(err)
-	}
+	host.send(proto.Control{T: "meta", W: 100, H: 50, FPS: 15})
 	if ctl := viewer.waitControl("meta"); ctl.W != 100 || ctl.H != 50 {
 		t.Fatalf("Meta nicht durchgereicht: %+v", ctl)
 	}
@@ -120,24 +141,58 @@ func TestRelayFlow(t *testing.T) {
 	viewer.waitControl("ended")
 }
 
-func TestHostResume(t *testing.T) {
+func TestDeny(t *testing.T) {
+	ts := newTestServer(t, time.Second, 8)
+
+	host := dial(t, ts, "deny-raum", "host")
+	host.waitControl("joined")
+
+	viewer := dial(t, ts, "deny-raum", "viewer")
+	viewer.waitControl("joined")
+
+	knock := host.waitControl("knock")
+	host.send(proto.Control{T: "deny", ID: knock.ID})
+	viewer.waitControl("denied")
+}
+
+func TestAutoAccept(t *testing.T) {
+	ts := newTestServer(t, time.Second, 8)
+
+	host := dial(t, ts, "auto-raum", "host")
+	host.waitControl("joined")
+	host.send(proto.Control{T: "auto", On: true})
+	host.sync()
+
+	viewer := dial(t, ts, "auto-raum", "viewer")
+	viewer.waitControl("joined")
+	viewer.waitControl("allowed")
+
+	if ctl := host.waitControl("viewers"); ctl.N != 1 {
+		t.Fatalf("Zuschauerstand nach Auto-Freigabe: %+v", ctl)
+	}
+}
+
+func TestPendingSurvivesHostReconnect(t *testing.T) {
 	ts := newTestServer(t, 2*time.Second, 8)
 
-	host := dial(t, ts, "resume", "host")
+	host := dial(t, ts, "warte-raum", "host")
 	host.waitControl("joined")
-	viewer := dial(t, ts, "resume", "viewer")
+
+	viewer := dial(t, ts, "warte-raum", "viewer")
 	viewer.waitControl("joined")
+	host.waitControl("knock")
 
 	host.conn.Close()
 	viewer.waitControl("reconnecting")
 
-	host2 := dial(t, ts, "resume", "host")
+	host2 := dial(t, ts, "warte-raum", "host")
 	host2.waitControl("joined")
-	viewer.waitControl("live")
+	viewer.waitControl("waiting")
 
-	if ctl := host2.waitControl("viewers"); ctl.N != 1 {
-		t.Fatalf("Zuschauerstand nach Reconnect: %d", ctl.N)
-	}
+	// Die offene Anfrage wird dem neuen Host erneut gemeldet.
+	knock := host2.waitControl("knock")
+	host2.send(proto.Control{T: "allow", ID: knock.ID})
+	viewer.waitControl("allowed")
 }
 
 func TestJoinErrors(t *testing.T) {
@@ -145,7 +200,7 @@ func TestJoinErrors(t *testing.T) {
 
 	bad := dial(t, ts, "GROSS BUCHSTABEN", "host")
 	if ctl := bad.waitControl("error"); ctl.Msg == "" {
-		t.Fatal("erwarte Fehlermeldung für ungültigen Raumcode")
+		t.Fatal("erwarte Fehlermeldung für ungültige Sitzungs-ID")
 	}
 
 	host := dial(t, ts, "voll", "host")
@@ -158,6 +213,9 @@ func TestJoinErrors(t *testing.T) {
 
 	viewer := dial(t, ts, "voll", "viewer")
 	viewer.waitControl("joined")
+	knock := host.waitControl("knock")
+	host.send(proto.Control{T: "allow", ID: knock.ID})
+	viewer.waitControl("allowed")
 
 	full := dial(t, ts, "voll", "viewer")
 	if ctl := full.waitControl("error"); !strings.Contains(ctl.Msg, "voll") {

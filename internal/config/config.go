@@ -15,14 +15,15 @@ import (
 )
 
 type Config struct {
-	Server   string         `json:"server"`
-	Room     string         `json:"room"`
-	Name     string         `json:"name"`
-	FPS      int            `json:"fps"`
-	Quality  int            `json:"quality"`
-	MaxWidth int            `json:"max_width"`
-	Audio    bool           `json:"audio"`
-	Target   capture.Target `json:"target"`
+	Server     string         `json:"server"`
+	Room       string         `json:"room"`
+	Name       string         `json:"name"`
+	FPS        int            `json:"fps"`
+	Quality    int            `json:"quality"`
+	MaxWidth   int            `json:"max_width"`
+	Audio      bool           `json:"audio"`
+	AutoAccept bool           `json:"auto_accept"`
+	Target     capture.Target `json:"target"`
 }
 
 var roomPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
@@ -36,7 +37,7 @@ func Default() Config {
 	}
 	return Config{
 		Server:   "http://localhost:8080",
-		Room:     NewRoomCode(),
+		Room:     DefaultSessionID(),
 		Name:     name,
 		FPS:      15,
 		Quality:  70,
@@ -46,10 +47,44 @@ func Default() Config {
 	}
 }
 
-// NewRoomCode würfelt einen kurzen, gut tippbaren Raumcode.
-func NewRoomCode() string {
+// DefaultSessionID baut aus dem Rechnernamen eine stabile Sitzungs-ID mit
+// kurzem Anhängsel, damit zwei gleiche Rechnernamen nicht kollidieren.
+// 1 PC = 1 ID, änderbar im Panel.
+func DefaultSessionID() string {
+	host, _ := os.Hostname()
+	slug := slugify(strings.Split(host, ".")[0])
+	if len(slug) > 24 {
+		slug = strings.Trim(slug[:24], "-")
+	}
+	if slug == "" {
+		slug = "pc"
+	}
+	return slug + "-" + randSuffix(4)
+}
+
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	replacer := strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss")
+	s = replacer.Replace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '_' || r == '.':
+			b.WriteRune('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+	return out
+}
+
+func randSuffix(n int) string {
 	const alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
-	b := make([]byte, 6)
+	b := make([]byte, n)
 	for i := range b {
 		b[i] = alphabet[rand.Intn(len(alphabet))]
 	}
@@ -101,6 +136,7 @@ func Load() Config {
 	}
 	cfg.MaxWidth = loaded.MaxWidth
 	cfg.Audio = loaded.Audio
+	cfg.AutoAccept = loaded.AutoAccept
 	if loaded.Target.Kind != "" {
 		cfg.Target = loaded.Target
 	}

@@ -17,22 +17,25 @@ const (
 
 // Control ist eine Steuernachricht. Welche Felder gesetzt sind, hängt von T ab.
 type Control struct {
-	T     string `json:"t"`
-	Room  string `json:"room,omitempty"`
-	Role  string `json:"role,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Ver   string `json:"ver,omitempty"`
-	TS    int64  `json:"ts,omitempty"`
-	N     int    `json:"n,omitempty"`
-	W     int    `json:"w,omitempty"`
-	H     int    `json:"h,omitempty"`
-	FPS   int    `json:"fps,omitempty"`
-	Rate  int    `json:"rate,omitempty"`
-	Ch    int    `json:"ch,omitempty"`
-	Audio bool   `json:"audio,omitempty"`
-	Title string `json:"title,omitempty"`
-	Msg   string `json:"msg,omitempty"`
-	Fatal bool   `json:"fatal,omitempty"`
+	T     string   `json:"t"`
+	Room  string   `json:"room,omitempty"`
+	Role  string   `json:"role,omitempty"`
+	Name  string   `json:"name,omitempty"`
+	Ver   string   `json:"ver,omitempty"`
+	TS    int64    `json:"ts,omitempty"`
+	N     int      `json:"n,omitempty"`
+	W     int      `json:"w,omitempty"`
+	H     int      `json:"h,omitempty"`
+	FPS   int      `json:"fps,omitempty"`
+	Rate  int      `json:"rate,omitempty"`
+	Ch    int      `json:"ch,omitempty"`
+	Audio bool     `json:"audio,omitempty"`
+	Title string   `json:"title,omitempty"`
+	Msg   string   `json:"msg,omitempty"`
+	Fatal bool     `json:"fatal,omitempty"`
+	ID    uint64   `json:"id,omitempty"`
+	Names []string `json:"names,omitempty"`
+	On    bool     `json:"on,omitempty"`
 }
 
 // FramePacket baut ein Binärpaket mit einem JPEG-Frame.

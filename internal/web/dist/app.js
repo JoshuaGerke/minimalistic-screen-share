@@ -8,6 +8,8 @@
   const params = new URLSearchParams(location.search);
 
   let room = (params.get('room') || '').trim().toLowerCase();
+  let playerName = 'Gast';
+  try { playerName = localStorage.getItem('mss-name') || 'Gast'; } catch (e) { /* egal */ }
   let ws = null;
   let wantConnect = false;
   let state = 'idle';           // idle | connecting | waiting | live | reconnecting | ended | error
@@ -36,7 +38,7 @@
     }
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
-      ws.send(JSON.stringify({ t: 'join', room, role: 'viewer' }));
+      ws.send(JSON.stringify({ t: 'join', room, role: 'viewer', name: playerName }));
       startPing();
     };
     ws.onmessage = (ev) => {
@@ -92,7 +94,14 @@
     switch (m.t) {
       case 'joined':
         reconnectDelay = 1000;
-        if (state === 'connecting') setState('waiting');
+        if (state === 'connecting') setState('approval');
+        break;
+      case 'allowed':
+        if (state === 'approval') setState('waiting');
+        break;
+      case 'denied':
+        wantConnect = false;
+        setState('denied');
         break;
       case 'meta':
         if (m.w && m.h) {
@@ -110,6 +119,9 @@
         break;
       case 'reconnecting':
         setState('reconnecting');
+        break;
+      case 'waiting':
+        if (state === 'reconnecting') setState('approval');
         break;
       case 'live':
         setState('live');
@@ -264,6 +276,16 @@
         text = 'Warte auf Stream…';
         showSpinner = true;
         break;
+      case 'approval':
+        dot.classList.add('yellow');
+        text = 'Warte auf Freigabe durch den Streamer…';
+        showSpinner = true;
+        break;
+      case 'denied':
+        dot.classList.add('red');
+        text = 'Der Streamer hat die Anfrage abgelehnt.';
+        btn = 'Erneut anfragen';
+        break;
       case 'live':
         dot.classList.add('green');
         showOverlay = false;
@@ -338,6 +360,9 @@
     const value = $('#room-input').value.trim().toLowerCase();
     if (!value) return;
     room = value;
+    const name = $('#name-input').value.trim();
+    playerName = name || 'Gast';
+    try { localStorage.setItem('mss-name', playerName); } catch (e) { /* egal */ }
     history.replaceState(null, '', `?room=${encodeURIComponent(room)}`);
     $('#join').classList.add('hidden');
     $('#stage').classList.remove('hidden');
@@ -404,6 +429,8 @@
   });
 
   /* ---------- Start ---------- */
+
+  if (playerName !== 'Gast') $('#name-input').value = playerName;
 
   if (room) {
     $('#join').classList.add('hidden');

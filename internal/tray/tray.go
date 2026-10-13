@@ -34,6 +34,9 @@ type Tray interface {
 	// SetActivate hinterlegt, was ein Klick auf das Symbol selbst tun soll
 	// (unter Linux üblich, unter Windows zeigt der Klick das Menü).
 	SetActivate(fn func())
+	// Notify zeigt eine Systembenachrichtigung, z. B. bei einer
+	// Zuschaueranfrage. Ein Klick darauf öffnet das Panel.
+	Notify(title, text string)
 	Quit()
 }
 

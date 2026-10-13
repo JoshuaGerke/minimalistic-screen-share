@@ -198,6 +198,21 @@ func (t *linuxTray) Quit() {
 	t.quitOnce.Do(func() { close(t.quitCh) })
 }
 
+// Notify schickt eine Desktop-Benachrichtigung über den
+// org.freedesktop.Notifications-Dienst.
+func (t *linuxTray) Notify(title, text string) {
+	obj := t.conn.Object("org.freedesktop.Notifications", dbus.ObjectPath("/org/freedesktop/Notifications"))
+	obj.Call("org.freedesktop.Notifications.Notify", 0,
+		"minimalistic-screen-share",
+		uint32(0),
+		themeIcon["live"],
+		title,
+		text,
+		[]string{},
+		map[string]dbus.Variant{},
+		int32(5000))
+}
+
 func (t *linuxTray) layoutChanged() {
 	t.mu.Lock()
 	t.revision++

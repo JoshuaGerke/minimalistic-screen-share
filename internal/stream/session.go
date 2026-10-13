@@ -28,21 +28,30 @@ import (
 
 // Options bündelt alles, was eine Sitzung braucht.
 type Options struct {
-	Server   string
-	Room     string
-	Name     string
-	FPS      int
-	Quality  int
-	MaxWidth int
-	Audio    bool
-	Target   capture.Target
-	Log      *log.Logger
+	Server     string
+	Room       string
+	Name       string
+	FPS        int
+	Quality    int
+	MaxWidth   int
+	Audio      bool
+	AutoAccept bool
+	Target     capture.Target
+	Log        *log.Logger
+}
+
+// Knock ist eine Zuschaueranfrage, die auf Freigabe wartet.
+type Knock struct {
+	ID   uint64 `json:"id"`
+	Name string `json:"name"`
 }
 
 // Status ist der Zustand, den Tray und Host-Panel anzeigen.
 type Status struct {
 	State   string    `json:"state"`
 	Viewers int       `json:"viewers"`
+	Names   []string  `json:"names,omitempty"`
+	Pending []Knock   `json:"pending,omitempty"`
 	FPS     int       `json:"fps"`
 	Kbps    int       `json:"kbps"`
 	W       int       `json:"w"`
@@ -59,11 +68,19 @@ type Session struct {
 
 	mu       sync.Mutex
 	status   Status
+	pending  []Knock
+	names    []string
 	onChange func(Status)
 
 	stop    chan struct{}
 	stopped chan struct{}
 	once    sync.Once
+
+	connMu sync.Mutex
+	conn   *websocket.Conn
+	// writeMu serialisiert alle Nachrichten: gorilla erlaubt nur einen
+	// Schreiber gleichzeitig, hier schreiben Bild-, Ton- und Steuerlogik.
+	writeMu sync.Mutex
 
 	viewers    atomic.Int32
 	frameCount atomic.Int64
@@ -107,7 +124,116 @@ func (s *Session) Status() Status {
 	defer s.mu.Unlock()
 	st := s.status
 	st.RTTms = int(s.rtt.Load())
+	st.Pending = append([]Knock(nil), s.pending...)
+	st.Names = append([]string(nil), s.names...)
 	return st
+}
+
+// Allow lässt einen wartenden Zuschauer durch.
+func (s *Session) Allow(id uint64) error {
+	if err := s.writeJSON(proto.Control{T: "allow", ID: id}); err != nil {
+		return err
+	}
+	s.removePending(id)
+	return nil
+}
+
+// Deny lehnt eine Anfrage ab.
+func (s *Session) Deny(id uint64) error {
+	if err := s.writeJSON(proto.Control{T: "deny", ID: id}); err != nil {
+		return err
+	}
+	s.removePending(id)
+	return nil
+}
+
+// SetAutoAccept schaltet die automatische Freigabe im laufenden Stream um.
+func (s *Session) SetAutoAccept(on bool) error {
+	return s.writeJSON(proto.Control{T: "auto", On: on})
+}
+
+// currentConn liefert die gerade verbundene Sitzung oder nil.
+func (s *Session) currentConn() *websocket.Conn {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	return s.conn
+}
+
+func (s *Session) setConn(conn *websocket.Conn) {
+	s.connMu.Lock()
+	s.conn = conn
+	s.connMu.Unlock()
+}
+
+// writeMessage serialisiert Schreibzugriffe auf die WebSocket-Verbindung.
+func (s *Session) writeMessage(typ int, data []byte) error {
+	conn := s.currentConn()
+	if conn == nil {
+		return errors.New("nicht verbunden")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	return conn.WriteMessage(typ, data)
+}
+
+func (s *Session) writeJSON(v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return s.writeMessage(websocket.TextMessage, data)
+}
+
+func (s *Session) addPending(k Knock) {
+	s.mu.Lock()
+	for _, p := range s.pending {
+		if p.ID == k.ID {
+			s.mu.Unlock()
+			return
+		}
+	}
+	s.pending = append(s.pending, k)
+	s.mu.Unlock()
+	s.notifyStatus()
+}
+
+func (s *Session) removePending(id uint64) {
+	s.mu.Lock()
+	out := s.pending[:0]
+	changed := false
+	for _, p := range s.pending {
+		if p.ID == id {
+			changed = true
+			continue
+		}
+		out = append(out, p)
+	}
+	s.pending = out
+	s.mu.Unlock()
+	if changed {
+		s.notifyStatus()
+	}
+}
+
+func (s *Session) clearPending() {
+	s.mu.Lock()
+	s.pending = nil
+	s.mu.Unlock()
+}
+
+// notifyStatus schiebt den aktuellen Zustand sofort an den Empfänger
+// (z. B. damit das Tray bei einer Anfrage direkt Bescheid weiß).
+func (s *Session) notifyStatus() {
+	s.mu.Lock()
+	cb := s.onChange
+	st := s.status
+	st.Pending = append([]Knock(nil), s.pending...)
+	st.Names = append([]string(nil), s.names...)
+	s.mu.Unlock()
+	if cb != nil {
+		cb(st)
+	}
 }
 
 func (s *Session) Options() Options { return s.opts }
@@ -174,12 +300,8 @@ func (s *Session) setState(state, err string) {
 	if state == "live" && s.status.Started.IsZero() {
 		s.status.Started = time.Now()
 	}
-	cb := s.onChange
-	st := s.status
 	s.mu.Unlock()
-	if cb != nil {
-		cb(st)
-	}
+	s.notifyStatus()
 }
 
 // connectAndStream läuft eine Verbindung lang und kehrt bei Fehlern zurück.
@@ -222,6 +344,14 @@ func (s *Session) connectAndStream() error {
 		return fmt.Errorf("unerwartete Antwort: %q", ctl.T)
 	}
 	conn.SetReadDeadline(time.Time{})
+	s.setConn(conn)
+	defer s.setConn(nil)
+	defer s.clearPending()
+
+	// Freigabemodus mit dem Server abgleichen (gilt auch nach Reconnects).
+	if err := s.writeJSON(proto.Control{T: "auto", On: s.opts.AutoAccept}); err != nil {
+		return err
+	}
 	// Verbunden: Der Statistik-Loop schaltet auf "pausiert", solange
 	// niemand zuschaut.
 	s.setState("live", "")
@@ -251,7 +381,7 @@ func (s *Session) connectAndStream() error {
 		meta.Rate = audioSrc.Rate()
 		meta.Ch = audioSrc.Channels()
 	}
-	if err := conn.WriteJSON(meta); err != nil {
+	if err := s.writeJSON(meta); err != nil {
 		return err
 	}
 
@@ -270,7 +400,7 @@ func (s *Session) connectAndStream() error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := s.captureLoop(conn, src, stop); err != nil {
+		if err := s.captureLoop(src, stop); err != nil {
 			errCh <- err
 		}
 	}()
@@ -278,7 +408,7 @@ func (s *Session) connectAndStream() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.audioLoop(conn, audioSrc, stop)
+			s.audioLoop(audioSrc, stop)
 		}()
 	}
 
@@ -322,6 +452,13 @@ func (s *Session) readLoop(conn *websocket.Conn, stop <-chan struct{}) error {
 			switch ctl.T {
 			case "viewers":
 				s.viewers.Store(int32(ctl.N))
+				s.mu.Lock()
+				s.names = append([]string(nil), ctl.Names...)
+				s.mu.Unlock()
+			case "knock":
+				s.addPending(Knock{ID: ctl.ID, Name: ctl.Name})
+			case "knock-gone":
+				s.removePending(ctl.ID)
 			case "error":
 				if ctl.Fatal {
 					readErr <- errors.New(ctl.Msg)
@@ -350,7 +487,7 @@ func (s *Session) readLoop(conn *websocket.Conn, stop <-chan struct{}) error {
 // captureLoop holt Frames im eingestellten Takt. Ohne Zuschauer wird pausiert –
 // das spart Rechenzeit und Traffic, genau wie bei Discord. Unveränderte Bilder
 // werden übersprungen, neue Zuschauer bekommen trotzdem sofort ein Bild.
-func (s *Session) captureLoop(conn *websocket.Conn, src capture.Source, stop <-chan struct{}) error {
+func (s *Session) captureLoop(src capture.Source, stop <-chan struct{}) error {
 	interval := time.Second / time.Duration(s.opts.FPS)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -416,8 +553,7 @@ func (s *Session) captureLoop(conn *websocket.Conn, src capture.Source, stop <-c
 		seq++
 		lastViewers = viewers
 
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := conn.WriteMessage(websocket.BinaryMessage, packet); err != nil {
+		if err := s.writeMessage(websocket.BinaryMessage, packet); err != nil {
 			return err
 		}
 		s.frameCount.Add(1)
@@ -429,7 +565,7 @@ func (s *Session) captureLoop(conn *websocket.Conn, src capture.Source, stop <-c
 
 // audioLoop liest den Systemton und schickt ihn in 20-ms-Häppchen.
 // Stille wird als Marker übertragen, das spart Bandbreite.
-func (s *Session) audioLoop(conn *websocket.Conn, src audio.Source, stop <-chan struct{}) {
+func (s *Session) audioLoop(src audio.Source, stop <-chan struct{}) {
 	chunkSize := src.Rate() / 50 * 2 * src.Channels()
 	buf := make([]byte, chunkSize)
 	var seq uint32
@@ -453,8 +589,7 @@ func (s *Session) audioLoop(conn *websocket.Conn, src audio.Source, stop <-chan 
 			packet = proto.AudioPacket(seq, nowMS(), buf)
 		}
 		seq++
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := conn.WriteMessage(websocket.BinaryMessage, packet); err != nil {
+		if err := s.writeMessage(websocket.BinaryMessage, packet); err != nil {
 			return
 		}
 		s.byteCount.Add(int64(len(packet)))
@@ -496,13 +631,9 @@ func (s *Session) statsLoop() {
 				s.status.State = "live"
 			}
 		}
-		cb := s.onChange
-		st := s.status
 		s.mu.Unlock()
 		prevFrames, prevBytes = frames, bytesSent
-		if cb != nil {
-			cb(st)
-		}
+		s.notifyStatus()
 	}
 }
 

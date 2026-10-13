@@ -23,7 +23,8 @@ import (
 
 func main() {
 	server := flag.String("server", "http://localhost:8080", "Relay-Adresse")
-	room := flag.String("room", "", "Raumcode")
+	room := flag.String("room", "", "Sitzungs-ID")
+	name := flag.String("name", "cli", "Name, den der Streamer bei der Anfrage sieht")
 	save := flag.String("save", "", "letztes Frame fortlaufend in diese JPEG-Datei schreiben")
 	flag.Parse()
 
@@ -44,12 +45,12 @@ func main() {
 	}
 	defer conn.Close()
 
-	join := proto.Control{T: "join", Room: *room, Role: "viewer", Name: "cli", Ver: version.Version}
+	join := proto.Control{T: "join", Room: *room, Role: "viewer", Name: *name, Ver: version.Version}
 	if err := conn.WriteJSON(join); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Printf("mss-viewer %s – Raum %q auf %s\n", version.Version, *room, *server)
+	fmt.Printf("mss-viewer %s – Sitzung %q auf %s\n", version.Version, *room, *server)
 
 	var frames, audio, bytesIn atomic.Int64
 	var sizeW, sizeH atomic.Int64
@@ -71,6 +72,13 @@ func main() {
 				switch ctl.T {
 				case "meta":
 					fmt.Printf("Stream: %s (%d fps, Ton: %v)\n", ctl.Title, ctl.FPS, ctl.Audio)
+				case "joined":
+					fmt.Println("Anfrage gesendet – warte auf Freigabe durch den Streamer…")
+				case "allowed":
+					fmt.Println("Freigegeben.")
+				case "denied":
+					fmt.Println("Der Streamer hat die Anfrage abgelehnt.")
+					os.Exit(1)
 				case "viewers":
 					// egal, wir zählen selbst
 				case "ended":

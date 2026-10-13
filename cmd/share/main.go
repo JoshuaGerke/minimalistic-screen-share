@@ -34,6 +34,7 @@ const (
 	idWatch         = 4
 	idPanel         = 5
 	idQuit          = 6
+	idSessionID     = 7
 	idWindowMenu    = 10
 	idWindowBase    = 100
 	windowSlotCount = 20
@@ -431,6 +432,7 @@ func buildMenu(a *app.App) ([]*tray.Item, *windowSlots) {
 		{ID: idStop, Title: "Stream stoppen", Disabled: true, OnClick: a.Stop},
 		{Separator: true},
 		{ID: idStatus, Title: "Status: Bereit", Disabled: true},
+		{ID: idSessionID, Title: "Sitzungs-ID: –", OnClick: a.OpenPanel},
 		{ID: idWatch, Title: "Im Browser ansehen", Disabled: true, OnClick: a.OpenViewer},
 		{Separator: true},
 		{ID: idPanel, Title: "Einstellungen…", OnClick: a.OpenPanel},
@@ -449,6 +451,10 @@ func wireTray(a *app.App, t tray.Tray, slots *windowSlots) {
 	refreshFn = func() { refreshWindows(t, slots) }
 	refreshWindows(t, slots)
 
+	lastRoom := ""
+	lastPending := 0
+	t.SetItemTitle(idSessionID, "Sitzungs-ID: "+a.Config().Room)
+
 	a.SetOnStatus(func(st stream.Status) {
 		iconState, text := describe(st)
 		t.SetItemTitle(idStatus, text)
@@ -457,6 +463,19 @@ func wireTray(a *app.App, t tray.Tray, slots *windowSlots) {
 		live := a.Streaming()
 		t.SetItemEnabled(idStop, live)
 		t.SetItemEnabled(idWatch, live)
+
+		if room := a.Config().Room; room != lastRoom {
+			lastRoom = room
+			t.SetItemTitle(idSessionID, "Sitzungs-ID: "+room)
+		}
+
+		if n := len(st.Pending); n > 0 {
+			if n > lastPending {
+				name := st.Pending[n-1].Name
+				t.Notify("Anfrage von "+name, name+" möchte zuschauen. Klick öffnet das Panel zum Annehmen oder Ablehnen.")
+			}
+		}
+		lastPending = len(st.Pending)
 	})
 }
 
@@ -494,6 +513,12 @@ func startTarget(a *app.App, target capture.Target) {
 }
 
 func describe(st stream.Status) (iconState, text string) {
+	if n := len(st.Pending); n > 0 {
+		if n == 1 {
+			return "paused", "Status: Anfrage von " + st.Pending[0].Name
+		}
+		return "paused", fmt.Sprintf("Status: %d offene Anfragen", n)
+	}
 	switch st.State {
 	case "connecting":
 		return "idle", "Status: Verbinde…"

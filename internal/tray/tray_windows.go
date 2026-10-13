@@ -49,9 +49,10 @@ const (
 	wmTrayUpdate = wmApp + 2
 	wmTrayQuit   = wmApp + 3
 
-	wmLButtonUp = 0x0202
-	wmRButtonUp = 0x0205
-	wmDestroy   = 0x0002
+	wmLButtonUp         = 0x0202
+	wmRButtonUp         = 0x0205
+	wmDestroy           = 0x0002
+	ninBalloonUserClick = 0x0405
 
 	nimAdd     = 0x00000000
 	nimModify  = 0x00000001
@@ -59,6 +60,7 @@ const (
 	nifMessage = 0x00000001
 	nifIcon    = 0x00000002
 	nifTip     = 0x00000004
+	nifInfo    = 0x00000010
 
 	mfString         = 0x00000000
 	mfDisabled       = 0x00000002
@@ -123,6 +125,7 @@ type winTray struct {
 	hIcon    uintptr
 	hwnd     uintptr
 	taskbar  uint32
+	activate func()
 	quitOnce sync.Once
 }
 
@@ -229,6 +232,13 @@ func (t *winTray) wndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) 
 		switch lparam & 0xFFFF {
 		case wmLButtonUp, wmRButtonUp:
 			t.showMenu()
+		case ninBalloonUserClick:
+			t.mu.Lock()
+			fn := t.activate
+			t.mu.Unlock()
+			if fn != nil {
+				go fn()
+			}
 		}
 		return 0
 	case wmTrayUpdate:
@@ -361,9 +371,24 @@ func (t *winTray) Quit() {
 	})
 }
 
-// SetActivate ist unter Windows ohne Wirkung – dort öffnet der Linksklick
-// wie bei Discord das Menü.
-func (t *winTray) SetActivate(fn func()) {}
+func (t *winTray) SetActivate(fn func()) {
+	t.mu.Lock()
+	t.activate = fn
+	t.mu.Unlock()
+}
+
+// Notify zeigt eine Sprechblase am Symbol (Windows-Balloon). Ein Klick
+// darauf öffnet über SetActivate das Panel.
+func (t *winTray) Notify(title, text string) {
+	nid := t.iconData()
+	nid.UFlags |= nifInfo
+	// iconData sichert nur den Tooltip; Titel und Text hier nachtragen.
+	t.mu.Lock()
+	copyUTF16(nid.SzInfoTitle[:], title)
+	copyUTF16(nid.SzInfo[:], text)
+	t.mu.Unlock()
+	procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&nid)))
+}
 
 // iconFromICO holt das 32×32-Bild aus den rohen ICO-Daten.
 func iconFromICO(ico []byte) (uintptr, error) {

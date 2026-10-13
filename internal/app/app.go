@@ -54,7 +54,8 @@ func (a *App) Config() config.Config {
 	return a.cfg
 }
 
-// SaveConfig prüft und speichert neue Einstellungen.
+// SaveConfig prüft und speichert neue Einstellungen. Läuft gerade ein Stream,
+// wandert die Auto-Freigabe direkt in die laufende Sitzung.
 func (a *App) SaveConfig(c config.Config) error {
 	if err := c.Validate(); err != nil {
 		return err
@@ -63,8 +64,13 @@ func (a *App) SaveConfig(c config.Config) error {
 		return err
 	}
 	a.mu.Lock()
+	old := a.cfg.AutoAccept
+	sess := a.sess
 	a.cfg = c
 	a.mu.Unlock()
+	if sess != nil && old != c.AutoAccept {
+		sess.SetAutoAccept(c.AutoAccept)
+	}
 	return nil
 }
 
@@ -108,15 +114,16 @@ func (a *App) Start(target capture.Target) error {
 	cfg.Save()
 
 	sess := stream.New(stream.Options{
-		Server:   cfg.Server,
-		Room:     cfg.Room,
-		Name:     cfg.Name,
-		FPS:      cfg.FPS,
-		Quality:  cfg.Quality,
-		MaxWidth: cfg.MaxWidth,
-		Audio:    cfg.Audio,
-		Target:   target,
-		Log:      a.log,
+		Server:     cfg.Server,
+		Room:       cfg.Room,
+		Name:       cfg.Name,
+		FPS:        cfg.FPS,
+		Quality:    cfg.Quality,
+		MaxWidth:   cfg.MaxWidth,
+		Audio:      cfg.Audio,
+		AutoAccept: cfg.AutoAccept,
+		Target:     target,
+		Log:        a.log,
 	})
 	sess.SetOnChange(a.onSessionStatus)
 	a.sess = sess
@@ -145,6 +152,28 @@ func (a *App) Stop() {
 	if sess != nil {
 		sess.Stop()
 	}
+}
+
+// Allow lässt eine wartende Zuschaueranfrage durch.
+func (a *App) Allow(id uint64) error {
+	a.mu.Lock()
+	sess := a.sess
+	a.mu.Unlock()
+	if sess == nil {
+		return errors.New("kein Stream aktiv")
+	}
+	return sess.Allow(id)
+}
+
+// Deny lehnt eine Zuschaueranfrage ab.
+func (a *App) Deny(id uint64) error {
+	a.mu.Lock()
+	sess := a.sess
+	a.mu.Unlock()
+	if sess == nil {
+		return errors.New("kein Stream aktiv")
+	}
+	return sess.Deny(id)
 }
 
 func (a *App) Streaming() bool {

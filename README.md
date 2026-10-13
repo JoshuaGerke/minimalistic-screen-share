@@ -8,11 +8,13 @@ Discord kann Screensharing, aber 1080p/60 gibt es nur mit Nitro, unter Linux ist
 
 ## Was es kann
 
+- **Feste Sitzungs-ID pro PC** (z. B. `joshua-gerke-4f2a`): Du startest den Stream, die ID bleibt gleich, andere tippen sie ein oder öffnen deinen Link
+- **Zuschauer müssen freigegeben werden**: Wer rein will, klopft an – du bekommst eine Benachrichtigung und entscheidest im Panel. Auf Wunsch auch automatisch (ohne Nachfrage)
 - **Bildschirm, Monitor oder einzelnes Fenster** streamen, wahlweise mit Mauszeiger
 - **Systemton** mitschicken: WASAPI-Loopback unter Windows, Monitor der Standard-Senke unter Linux
 - **Pausiert automatisch, wenn niemand zuschaut** (wie Discord) – spart CPU und Traffic
 - **Überspringt unveränderte Bilder** – bei statischem Bildschirm geht fast nichts durch die Leitung
-- **Verbindungsabbrüche fängt es ab**: Der Host hat 20 Sekunden Reconnect-Fenster, Zuschauer verbinden sich von selbst neu
+- **Verbindungsabbrüche fängt es ab**: Der Host hat 20 Sekunden Reconnect-Fenster, offene Anfragen und Zuschauer bleiben dabei erhalten
 - **Dunkle, aufgeräumte Oberfläche** im Discord-Stil, Zuschauer brauchen nur den Link
 - Läuft als Tray-App (Windows: Infobereich, Linux: StatusNotifier für waybar & Co.)
 
@@ -26,14 +28,15 @@ Fenster streamen ▸   Chrome, Steam, Terminal, …
 Monitor streamen ▸   Alle Monitore, Monitor 1 (1920×1080), …
 Stream stoppen
 ─────────────────────────
-Status: Live – 2 Zuschauer
+Status: Anfrage von Max
+Sitzungs-ID: joshua-gerke-4f2a
 Im Browser ansehen
 ─────────────────────────
 Einstellungen…
 Beenden
 ```
 
-Der Viewer im Browser: schwarze Bühne mit dem Stream, oben eine Leiste mit Raum, Status, Ton- und Vollbildknopf, unten eine dünne Zeile mit Auflösung, fps, Datenrate, Ping und Zuschauerzahl.
+Der Viewer im Browser: schwarze Bühne mit dem Stream, oben eine Leiste mit Sitzungs-ID, Status, Ton- und Vollbildknopf, unten eine dünne Zeile mit Auflösung, fps, Datenrate, Ping und Zuschauerzahl. Solange du nicht freigegeben hast, steht dort „Warte auf Freigabe durch den Streamer…“.
 
 ## Installation
 
@@ -116,9 +119,12 @@ Im Panel dann `https://share.example.com` als Server eintragen. Der Relay ist ab
 
 1. `mss-share` starten – das Symbol sitzt im Infobereich.
 2. Rechtsklick (oder Linksklick) → **Einstellungen…** – das Panel öffnet sich im Browser.
-3. Server und Raum eintragen. Der Raumcode steht schon drin, „Neu“ würfelt einen anderen.
+3. Server eintragen und die **Sitzungs-ID** prüfen. Sie wird beim ersten Start aus dem Rechnernamen gebaut (z. B. `joshua-gerke-4f2a`) und bleibt danach gleich – damit finden dich andere wieder. „Neu“ würfelt eine andere.
 4. **Stream starten** – oder im Tray direkt auf „Bildschirm streamen“.
-5. Link kopieren und verschicken. Zuschauer öffnen ihn einfach im Browser, Ton bei Bedarf per Knopf aktivieren (Browser blockieren Ton bis zum ersten Klick).
+5. Link oder Sitzungs-ID verschicken. Zuschauer öffnen den Link im Browser und tippen ihren Namen ein.
+6. Wenn jemand zuschauen will, **klopft er an**: Du bekommst eine Benachrichtigung, im Panel stehen die Anfragen mit **Annehmen** und **Ablehnen**. Erst danach sieht er dein Bild. Wer immer rein darf, hakt „Zuschauer automatisch freigeben“ an – dann läuft es wie ein offener Raum.
+
+Ton aktivieren Zuschauer bei Bedarf per Knopf (Browser blockieren Ton bis zum ersten Klick).
 
 Einstellungen liegen in `%APPDATA%\minimalistic-screen-share\config.json` (Windows) bzw. `~/.config/minimalistic-screen-share/config.json` (Linux).
 
@@ -136,19 +142,19 @@ mss-share --list-windows           # Fenster auflisten
 mss-share --list-monitors          # Monitore auflisten
 ```
 
-Nützliche Schalter: `--server`, `--room`, `--fps`, `--quality`, `--width`, `--window`, `--monitor`, `--region x,y,w,h`, `--no-audio`, `--debug`.
+Nützliche Schalter: `--server`, `--room` (Sitzungs-ID), `--fps`, `--quality`, `--width`, `--window`, `--monitor`, `--region x,y,w,h`, `--no-audio`, `--debug`.
 
-Zum Gegenprüfen ohne Browser:
+Zum Gegenprüfen ohne Browser (klopft an und wartet auf Freigabe wie jeder Zuschauer):
 
 ```bash
-mss-viewer --server http://localhost:8080 --room dein-raum --save latest.jpg
+mss-viewer --server http://localhost:8080 --room deine-sitzungs-id --name Max --save latest.jpg
 ```
 
 Zählt fps, Datenrate und Tonpakete und schreibt das jeweils letzte Bild nach `latest.jpg`.
 
 ## Technik in drei Sätzen
 
-Aufnahme und Ton werden im Client zu JPEG-Bildern und rohem PCM verpackt und über einen WebSocket zum Relay geschoben, der sie an alle im Raum verteilt; im Browser malt ein Canvas die Bilder und eine kleine WebAudio-Pipeline puffert den Ton. Der Relay macht bewusst kein P2P- oder NAT-Gebastel: Wer zuschauen soll, kommt an den Server, den du eh betreibst, damit es überall funktioniert, wo auch HTTP durchgeht. JPEG statt H.264 ist Absicht: keine Encoder-Abhängigkeiten, jedes Bild ist ein Keyframe, spät dazugekommene Zuschauer haben sofort ein Bild.
+Aufnahme und Ton werden im Client zu JPEG-Bildern und rohem PCM verpackt und über einen WebSocket zum Relay geschoben, der sie an alle freigegebenen Zuschauer im Raum verteilt; im Browser malt ein Canvas die Bilder und eine kleine WebAudio-Pipeline puffert den Ton. Zuschauer landen erst in einer Warteliste und klopfen beim Host an – der Relay merkt sich den Raum, die Sitzungs-ID und offene Anfragen, bis der Host freigibt (oder automatisch durchwinkt). JPEG statt H.264 ist Absicht: keine Encoder-Abhängigkeiten, jedes Bild ist ein Keyframe, spät dazugekommene Zuschauer haben sofort ein Bild.
 
 ## Grenzen
 
@@ -156,7 +162,8 @@ Aufnahme und Ton werden im Client zu JPEG-Bildern und rohem PCM verpackt und üb
 - Fensteraufnahme unter Windows läuft über `PrintWindow`. Bei dem einen oder anderen Spiel kommt da nur Schwarz an – dann wird auf den sichtbaren Bildschirmbereich des Fensters ausgewichen, das Fenster sollte also vorn sein.
 - Unter Wayland braucht die Aufnahme `grim`; Fensteraufnahme setzt Hyprland voraus (`hyprctl`). X11 und Bildschirm/Bereich unter Wayland klappen ohne Hyprland.
 - Keine Ende-zu-Ende-Verschlüsselung. Fürs Internet TLS über den Reverse Proxy und den Relay selbst betreiben, dem du traust.
-- Kein Zuschauer-Limit jenseits von `-max-viewers` am Relay (Standard 8).
+- Kein Zuschauer-Limit jenseits von `-max-viewers` am Relay (Standard 8); maximal 20 offene Anfragen pro Raum.
+- Die Sitzungs-ID ist wie ein Discord-Name plus Passwort in einem: Wer sie kennt, kann anfragen – annehmen musst trotzdem du.
 
 ## Roadmap (mal sehen)
 

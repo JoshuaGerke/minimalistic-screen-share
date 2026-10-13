@@ -404,3 +404,21 @@ body.host { overflow-y: auto; }
 .status-pill.red .dot { background: var(--red); box-shadow: 0 0 8px rgba(242, 63, 67, .8); }
 
 #stats { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+.request-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.request-row:last-child { border-bottom: 0; }
+
+.request-name {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

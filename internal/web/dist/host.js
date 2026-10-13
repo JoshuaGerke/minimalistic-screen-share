@@ -28,6 +28,7 @@
     $('#cfg-quality').value = String(cfg.quality || 70);
     $('#cfg-width').value = String(cfg.max_width ?? 1600);
     $('#cfg-audio').checked = !!cfg.audio;
+    $('#cfg-auto').checked = !!cfg.auto_accept;
     $('#cfg-cursor').checked = cfg.target ? !!cfg.target.cursor : true;
 
     const kindMap = { window: 'window', monitor: 'monitor', screen: 'screen', test: 'test', region: 'screen' };
@@ -93,6 +94,7 @@
       quality: Number($('#cfg-quality').value),
       max_width: Number($('#cfg-width').value),
       audio: $('#cfg-audio').checked,
+      auto_accept: $('#cfg-auto').checked,
       target: currentTarget(),
     };
     const res = await fetch('/api/config', { method: 'POST', body: JSON.stringify(body) });
@@ -152,10 +154,12 @@
 
       const s = st.stream || {};
       const pill = $('#status-pill');
-      pill.className = 'status-pill ' + pillClass(s.state);
+      pill.className = 'status-pill ' + pillClass(s.state, s.pending);
       $('#status-label').textContent = pillLabel(s);
 
-      $('#stat-viewers').textContent = s.viewers ?? 0;
+      renderRequests(s.pending || []);
+
+      $('#stat-viewers').textContent = viewerText(s);
       $('#stat-res').textContent = s.w ? `${s.w}×${s.h}` : '–';
       $('#stat-fps').textContent = s.state === 'live' || s.state === 'paused' ? `${s.fps ?? 0}` : '–';
       const kbps = s.kbps ?? 0;
@@ -175,7 +179,8 @@
     }
   }
 
-  function pillClass(state) {
+  function pillClass(state, pending) {
+    if (pending && pending.length > 0) return 'yellow';
     switch (state) {
       case 'live': return 'green';
       case 'connecting':
@@ -187,6 +192,9 @@
   }
 
   function pillLabel(s) {
+    const pending = s.pending || [];
+    if (pending.length === 1) return 'Anfrage von ' + pending[0].name;
+    if (pending.length > 1) return pending.length + ' offene Anfragen';
     switch (s.state) {
       case 'connecting': return 'Verbinde…';
       case 'live': return 'Live';
@@ -195,6 +203,49 @@
       case 'error': return 'Fehler';
       default: return 'Bereit';
     }
+  }
+
+  function viewerText(s) {
+    const names = (s.names || []).filter((n) => n);
+    if (names.length === 0) return String(s.viewers ?? 0);
+    return `${names.join(', ')} (${names.length})`;
+  }
+
+  /* ---------- Anfragen ---------- */
+
+  function renderRequests(pending) {
+    const card = $('#requests-card');
+    const box = $('#requests');
+    card.classList.toggle('hidden', pending.length === 0);
+    box.innerHTML = '';
+    pending.forEach((p) => {
+      const row = document.createElement('div');
+      row.className = 'request-row';
+      const name = document.createElement('span');
+      name.className = 'request-name';
+      name.textContent = p.name;
+      const ok = document.createElement('button');
+      ok.className = 'btn primary';
+      ok.type = 'button';
+      ok.textContent = 'Annehmen';
+      ok.addEventListener('click', () => decide('/api/allow', p.id));
+      const no = document.createElement('button');
+      no.className = 'btn';
+      no.type = 'button';
+      no.textContent = 'Ablehnen';
+      no.addEventListener('click', () => decide('/api/deny', p.id));
+      row.append(name, ok, no);
+      box.appendChild(row);
+    });
+  }
+
+  async function decide(url, id) {
+    const res = await fetch(url, { method: 'POST', body: JSON.stringify({ id }) });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      hint('#start-error', data.error || 'Aktion fehlgeschlagen', true);
+    }
+    poll();
   }
 
   function hint(sel, text, isError) {
