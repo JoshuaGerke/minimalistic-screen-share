@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>minimalistic screen share</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235865f2'/%3E%3Cpath d='M13 10.5l9 5.5-9 5.5z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="host">
+
+<div class="host-wrap">
+  <div class="host-head">
+    <div class="logo small">
+      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+        <rect x="4" y="6" width="24" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M12.5 10.5l8 3.5-8 3.5z" fill="currentColor"/>
+        <path d="M12 26h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M16 22v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h1>minimalistic screen share</h1>
+    <span id="version" class="ver"></span>
+    <span class="spacer"></span>
+    <span id="status-pill" class="status-pill"><span class="dot"></span><span id="status-label">Bereit</span></span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Stream</h2>
+      <div class="field">
+        <span>Aufnehmen</span>
+        <div class="target-list">
+          <label class="check"><input type="radio" name="target" value="primary" checked> Hauptbildschirm</label>
+          <label class="check"><input type="radio" name="target" value="window"> Fenster</label>
+          <label class="check"><input type="radio" name="target" value="monitor"> Monitor</label>
+          <label class="check"><input type="radio" name="target" value="screen"> Alle Monitore</label>
+          <label class="check"><input type="radio" name="target" value="test"> Testbild</label>
+        </div>
+      </div>
+      <div class="field hidden" id="window-field">
+        <span>Fenster wählen</span>
+        <div class="row">
+          <select id="window-select"></select>
+          <button class="btn fixed" id="window-refresh" type="button">Neu laden</button>
+        </div>
+      </div>
+      <div class="field hidden" id="monitor-field">
+        <span>Monitor wählen</span>
+        <select id="monitor-select"></select>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="btn-start" type="button">Stream starten</button>
+        <button class="btn" id="btn-stop" type="button">Stoppen</button>
+      </div>
+      <p class="hint" id="start-error"></p>
+
+      <div class="kv" id="stats">
+        <span>Zuschauer</span><b id="stat-viewers">–</b>
+        <span>Auflösung</span><b id="stat-res">–</b>
+        <span>Bilder/s</span><b id="stat-fps">–</b>
+        <span>Datenrate</span><b id="stat-rate">–</b>
+        <span>Ping</span><b id="stat-ping">–</b>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Teilen</h2>
+      <p class="muted small">Schick den Link an alle, die zuschauen sollen. Jeder mit dem Link kann zusehen – er ist das Passwort.</p>
+      <div class="share-link">
+        <input id="share-url" readonly>
+        <button class="btn fixed" id="btn-copy" type="button">Kopieren</button>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btn-open-viewer" type="button">Im Browser ansehen</button>
+      </div>
+      <p class="hint" id="copy-hint"></p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Einstellungen</h2>
+    <div class="grid">
+      <div>
+        <div class="field">
+          <span>Server</span>
+          <input id="cfg-server" placeholder="http://localhost:8080">
+        </div>
+        <div class="field">
+          <span>Raum</span>
+          <div class="row">
+            <input id="cfg-room" placeholder="z. B. joshua-live" maxlength="32" spellcheck="false">
+            <button class="btn fixed" id="btn-new-room" type="button">Neu</button>
+          </div>
+        </div>
+        <div class="field">
+          <span>Name</span>
+          <input id="cfg-name" placeholder="Dein Name">
+        </div>
+      </div>
+      <div>
+        <div class="field">
+          <span>Bilder pro Sekunde</span>
+          <select id="cfg-fps">
+            <option value="5">5 – sparsam</option>
+            <option value="10">10</option>
+            <option value="15">15 – Standard</option>
+            <option value="24">24</option>
+            <option value="30">30 – flüssig</option>
+          </select>
+        </div>
+        <div class="field">
+          <span>Qualität</span>
+          <select id="cfg-quality">
+            <option value="55">Niedrig – wenig Daten</option>
+            <option value="70">Mittel – Standard</option>
+            <option value="85">Hoch – scharf</option>
+          </select>
+        </div>
+        <div class="field">
+          <span>Maximale Breite</span>
+          <select id="cfg-width">
+            <option value="1280">1280 – klein</option>
+            <option value="1600">1600 – Standard</option>
+            <option value="1920">1920 – Full HD</option>
+            <option value="0">Original</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="cfg-audio"> Systemton streamen</label>
+          <label class="check"><input type="checkbox" id="cfg-cursor"> Mauszeiger zeigen</label>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="btn-save" type="button">Speichern</button>
+    </div>
+    <p class="hint" id="save-hint"></p>
+  </div>
+
+  <p class="hint" id="platform-hint"></p>
+</div>
+
+<script src="/host.js"></script>
+</body>
+</html>
