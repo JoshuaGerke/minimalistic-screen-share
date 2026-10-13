@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/audio"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/config"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/server"
@@ -179,7 +180,40 @@ func (a *App) Start(target capture.Target) error {
 			cb(stream.Status{State: "idle"})
 		}
 	}()
+
+	if cfg.Audio {
+		go a.holdMutes(sess)
+	}
 	return nil
+}
+
+// holdMutes hält die Stummschaltung der Tonquellen aktuell, solange die
+// Sitzung läuft – auch wenn ein Programm erst später Ton spielt. Beim Ende
+// wird alles wieder laut gestellt.
+func (a *App) holdMutes(sess *stream.Session) {
+	apply := func() {
+		a.mu.Lock()
+		names := append([]string(nil), a.cfg.MutedApps...)
+		a.mu.Unlock()
+		if len(names) == 0 {
+			return
+		}
+		if err := audio.MuteApps(names); err != nil {
+			a.log.Printf("Tonquellen stummschalten: %v", err)
+		}
+	}
+	apply()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			apply()
+		case <-sess.Done():
+			audio.RestoreAll()
+			return
+		}
+	}
 }
 
 func (a *App) Stop() {

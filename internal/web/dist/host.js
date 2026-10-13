@@ -162,6 +162,7 @@
       $('#status-label').textContent = pillLabel(s);
 
       renderRequests(s.pending || []);
+      pollAudioSources(st);
 
       // Relay- und Tunnel-Zustand
       const relayHint = $('#relay-hint');
@@ -238,6 +239,75 @@
     const names = (s.names || []).filter((n) => n);
     if (names.length === 0) return String(s.viewers ?? 0);
     return `${names.join(', ')} (${names.length})`;
+  }
+
+  /* ---------- Ton-Quellen ---------- */
+
+  let audioSourcesTimer = 0;
+
+  async function pollAudioSources(st) {
+    const card = $('#audio-sources-card');
+    if (!st.streaming) {
+      card.classList.add('hidden');
+      return;
+    }
+    card.classList.remove('hidden');
+    // Nur alle drei Sekunden abfragen – reicht und schont die Tonausgabe.
+    const now = Date.now();
+    if (now - audioSourcesTimer < 3000) return;
+    audioSourcesTimer = now;
+
+    const data = await fetch('/api/audiosessions').then((r) => r.json()).catch(() => null);
+    if (!data) return;
+    renderAudioSources(data);
+  }
+
+  function renderAudioSources(data) {
+    const box = $('#audio-sources');
+    const muted = new Set((data.muted || []).map((n) => n.toLowerCase()));
+    const hint = $('#audio-sources-hint');
+    if (data.error) {
+      hint.textContent = data.error;
+      hint.style.color = 'var(--red)';
+    } else {
+      hint.textContent = 'Die Liste füllt sich, sobald Programme Ton spielen.';
+      hint.style.color = 'var(--dim)';
+    }
+
+    box.innerHTML = '';
+    const sessions = data.sessions || [];
+    if (sessions.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'Gerade spielt kein Programm Ton.';
+      box.appendChild(empty);
+      return;
+    }
+    sessions.forEach((s) => {
+      const row = document.createElement('label');
+      row.className = 'check source-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = muted.has(s.name.toLowerCase());
+      cb.addEventListener('change', async () => {
+        await fetch('/api/audiosessions', {
+          method: 'POST',
+          body: JSON.stringify({ name: s.name, muted: cb.checked }),
+        });
+        audioSourcesTimer = 0;
+        poll();
+      });
+      const text = document.createElement('span');
+      text.textContent = s.label || s.name;
+      if (s.muted && cb.checked) {
+        const tag = document.createElement('span');
+        tag.className = 'muted';
+        tag.textContent = ' (stumm, wird beim Stoppen zurückgesetzt)';
+        text.appendChild(tag);
+      }
+      row.append(cb, text);
+      box.appendChild(row);
+    });
   }
 
   /* ---------- Anfragen ---------- */
@@ -342,6 +412,10 @@
   $('#btn-tunnel').addEventListener('change', async (ev) => {
     await fetch('/api/tunnel', { method: 'POST', body: JSON.stringify({ on: ev.target.checked }) });
     poll();
+  });
+
+  $('#btn-mixer').addEventListener('click', () => {
+    fetch('/api/openmixer', { method: 'POST' });
   });
 
   load();

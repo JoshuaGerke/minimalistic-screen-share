@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"regexp"
 	"sort"
@@ -115,6 +116,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
+	}
+	// Kleiner Sendepuffer: Bei langsamen Zuschauern (z. B. über einen Tunnel)
+	// sollen Videoframes früh verworfen werden, statt sich im Kernel
+	// aufzustauen – sonst hängen Ton und Bild sekundenlang hinterher.
+	if tcpConn, ok := conn.UnderlyingConn().(*net.TCPConn); ok {
+		tcpConn.SetWriteBuffer(512 * 1024)
 	}
 	c := &client{srv: s, conn: conn, send: make(chan []byte, sendQueue)}
 
@@ -425,15 +432,18 @@ func (s *Server) acceptAllLocked(rm *room) {
 	s.sendViewersLocked(rm)
 }
 
-// relayBinary schickt ein Binärpaket vom Host an alle Zuschauer.
+// relayBinary schickt ein Binärpaket vom Host an alle Zuschauer. Tondaten
+// haben Vorrang: Sie werden nie verworfen, Videoframes schon – sonst knackt
+// der Ton, sobald die Leitung nicht hinterherkommt.
 func (s *Server) relayBinary(from *client, msg []byte) {
+	priority := len(msg) > 0 && (msg[0] == proto.MsgAudio || msg[0] == proto.MsgSilence)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if from.room == nil || from.room.host != from {
 		return
 	}
 	for v := range from.room.viewers {
-		v.enqueue(msg, false)
+		v.enqueue(msg, priority)
 	}
 }
 

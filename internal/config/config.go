@@ -25,6 +25,7 @@ type Config struct {
 	Audio      bool           `json:"audio"`
 	AutoAccept bool           `json:"auto_accept"`
 	RunRelay   bool           `json:"run_relay"`
+	MutedApps  []string       `json:"muted_apps,omitempty"`
 	Target     capture.Target `json:"target"`
 }
 
@@ -141,6 +142,7 @@ func Load() Config {
 	cfg.Audio = loaded.Audio
 	cfg.AutoAccept = loaded.AutoAccept
 	cfg.PublicURL = loaded.PublicURL
+	cfg.MutedApps = loaded.MutedApps
 	if loaded.Target.Kind != "" {
 		cfg.Target = loaded.Target
 	}

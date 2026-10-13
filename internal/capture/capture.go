@@ -80,9 +80,12 @@ func (t Target) Label() string {
 	return t.Kind
 }
 
-// Primary liefert das Hauptziel: den Monitor oben links (unter Windows und
-// X11 der primäre, unter Hyprland meist der fokussierte).
+// Primary liefert das Hauptziel: den fokussierten Monitor (Hyprland), sonst
+// den Monitor oben links (unter Windows und X11 der primäre).
 func Primary() Target {
+	if t, ok := primaryFocused(); ok {
+		return t
+	}
 	monitors, err := ListMonitors()
 	if err == nil && len(monitors) > 0 {
 		for _, m := range monitors {

@@ -107,6 +107,14 @@ fi
 
 # --- installieren -----------------------------------------------------------
 
+# Läuft die App gerade, wird sie beendet und nach dem Update neu gestartet.
+was_running=0
+if pgrep -x mss-share >/dev/null 2>&1; then
+	was_running=1
+	pkill -x mss-share 2>/dev/null || true
+	sleep 0.5
+fi
+
 schritt "Installiere nach $BIN_DIR"
 mkdir -p "$BIN_DIR" "$APP_DIR"
 for b in mss-share mss-relay mss-viewer; do
@@ -196,3 +204,12 @@ fi
 echo ""
 echo "Fertig. Start: mss-share --settings (oder aus dem Anwendungsmenü)."
 echo "Deinstallieren: uninstall.sh"
+
+if [ "$was_running" -eq 1 ]; then
+	if command -v setsid >/dev/null 2>&1; then
+		(setsid "$BIN_DIR/mss-share" >/dev/null 2>&1 &)
+	else
+		("$BIN_DIR/mss-share" >/dev/null 2>&1 &)
+	fi
+	echo "Laufende Instanz wurde neu gestartet."
+fi

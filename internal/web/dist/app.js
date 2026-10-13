@@ -223,7 +223,10 @@
   function ensureAudio() {
     if (actx) return;
     try {
-      actx = new AudioContext({ sampleRate: audioRate });
+      // Bewusst ohne sampleRate-Option: Der Browser nimmt die Rate des
+      // Geräts und rechnet unsere Puffer selbst um. Erzwungene Raten haben
+      // auf manchen Systemen (Chromium unter PipeWire) geknistert.
+      actx = new AudioContext();
       gain = actx.createGain();
       gain.connect(actx.destination);
     } catch (e) {

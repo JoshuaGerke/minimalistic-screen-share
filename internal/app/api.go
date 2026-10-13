@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/audio"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/config"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/web"
@@ -24,6 +25,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/api/allow", a.localOnly(a.handleAllow))
 	mux.HandleFunc("/api/deny", a.localOnly(a.handleDeny))
 	mux.HandleFunc("/api/tunnel", a.localOnly(a.handleTunnel))
+	mux.HandleFunc("/api/audiosessions", a.localOnly(a.handleAudioSessions))
+	mux.HandleFunc("/api/openmixer", a.localOnly(a.handleOpenMixer))
 	mux.Handle("/", hostIndex(web.FS()))
 	return mux
 }
@@ -157,6 +160,89 @@ func (a *App) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		a.StopTunnel()
 	}
 	writeJSON(w, http.StatusOK, a.Status())
+}
+
+// handleAudioSessions listet die Tonquellen auf und merkt sich, welche
+// Programme nicht mitgestreamt werden sollen.
+func (a *App) handleAudioSessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		sessions, err := audio.ListSessions()
+		if sessions == nil {
+			sessions = []audio.Session{}
+		}
+		a.mu.Lock()
+		muted := append([]string(nil), a.cfg.MutedApps...)
+		streaming := a.sess != nil
+		a.mu.Unlock()
+		resp := map[string]any{
+			"sessions":  sessions,
+			"muted":     muted,
+			"streaming": streaming,
+		}
+		if err != nil {
+			resp["error"] = err.Error()
+		}
+		writeJSON(w, http.StatusOK, resp)
+
+	case http.MethodPost:
+		var body struct {
+			Name  string `json:"name"`
+			Muted bool   `json:"muted"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "ungültige Anfrage: "+err.Error())
+			return
+		}
+		name := strings.ToLower(strings.TrimSpace(body.Name))
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "Programmname fehlt")
+			return
+		}
+		cfg := a.Config()
+		cfg.MutedApps = toggleString(cfg.MutedApps, name, body.Muted)
+		if err := a.SaveConfig(cfg); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Nur während eines Streams sofort umsetzen – sonst würde man sich
+		// selbst den Ton abdrehen.
+		if a.Streaming() {
+			if err := audio.SetMuted(name, body.Muted); err != nil {
+				writeJSON(w, http.StatusOK, map[string]string{"warning": err.Error()})
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "nur GET oder POST")
+	}
+}
+
+func toggleString(list []string, value string, add bool) []string {
+	out := make([]string, 0, len(list)+1)
+	for _, v := range list {
+		if strings.EqualFold(v, value) {
+			continue
+		}
+		out = append(out, v)
+	}
+	if add {
+		out = append(out, value)
+	}
+	return out
+}
+
+// handleOpenMixer öffnet die Ton-Mischpult-Oberfläche des Systems – dort
+// lässt sich ein Programm dauerhaft "Von Aufnahme ausschließen".
+func (a *App) handleOpenMixer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	openMixer(a.log)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func hostIndex(static fs.FS) http.Handler {

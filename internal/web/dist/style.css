@@ -439,3 +439,11 @@ body.host { overflow-y: auto; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.source-row {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.source-row:last-child { border-bottom: 0; }
+.source-row .muted { font-weight: 400; }

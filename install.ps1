@@ -44,8 +44,11 @@ $Exes       = @("mss-share.exe", "mss-relay.exe", "mss-viewer.exe")
 
 function Schritt($text) { Write-Host "==> $text" }
 
-# Laufende Instanz beenden, sonst ist die exe gesperrt.
+# Laufende Instanz beenden, sonst ist die exe gesperrt. Ob sie lief, merken
+# wir uns – nach dem Update startet sie dann von selbst wieder.
+$wasRunning = @(Get-Process mss-share -ErrorAction SilentlyContinue).Count -gt 0
 Get-Process mss-share -ErrorAction SilentlyContinue | Stop-Process -Force
+if ($wasRunning) { Start-Sleep -Milliseconds 600 }
 
 # --- Quelle bestimmen -------------------------------------------------------
 
@@ -160,4 +163,7 @@ Write-Host "Fertig. Das Symbol sitzt im Infobereich - bei Windows 11 hinter dem 
 Write-Host "Start über Startmenü oder im Terminal: mss-share --settings"
 Write-Host "Deinstallieren: uninstall.ps1"
 
-if ($StartNow) { Start-Process $target }
+if ($StartNow -or $wasRunning) {
+    Start-Process $target
+    if ($wasRunning) { Write-Host "Laufende Instanz wurde neu gestartet." }
+}

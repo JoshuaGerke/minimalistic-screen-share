@@ -94,6 +94,17 @@
     <div id="requests"></div>
   </div>
 
+  <div class="card hidden" id="audio-sources-card">
+    <h2>Ton-Quellen</h2>
+    <p class="muted small">Programme, die gerade Ton spielen. Ein Haken schaltet das Programm <b>während des Streams bei dir stumm</b> – praktisch für Discord &amp; Co. Beim Stoppen wird alles zurückgestellt.</p>
+    <p class="muted small">Soll ein Programm <b>bei dir hörbar bleiben, aber nicht im Stream</b> sein: im Windows-Lautstärkemixer beim Programm <b>„Von Aufnahme ausschließen“</b> wählen.</p>
+    <div class="actions" style="margin-bottom:12px">
+      <button class="btn" id="btn-mixer" type="button">Lautstärkemixer öffnen</button>
+    </div>
+    <div id="audio-sources"></div>
+    <p class="hint" id="audio-sources-hint"></p>
+  </div>
+
   <div class="card">
     <h2>Einstellungen</h2>
     <div class="grid">

@@ -44,9 +44,35 @@ Läuft. Beim Zuschauer einmal auf den Lautsprecher-Knopf klicken, sonst bleibt d
 
 ## 4. Dein Kumpel streamt (gleiches Spiel rückwärts)
 
-1. Er drückt in seinem Panel **Stream starten** – unter Omarchy/Hyprland nimmt er den fokussierten Monitor und den Systemton auf
+1. Er drückt in seinem Panel **Stream starten** – unter Omarchy/Hyprland nimmt er den Monitor auf, der gerade fokussiert ist
 2. Er kopiert seinen Link (gleiche Adresse wie oben, nur seine Sitzungs-ID) und schickt ihn dir
 3. Du öffnest den Link, tippst deinen Namen ein, er nimmt an – fertig
+
+## Ton ausnehmen und fein einstellen
+
+Während eines Streams steht im Panel die Karte **Ton-Quellen**: Dort tauchen alle Programme auf, die gerade Ton spielen. Ein Haken schaltet das Programm **während des Streams bei dir stumm** (praktisch für Discord & Co.) – beim Stoppen wird alles automatisch zurückgestellt.
+
+**Wenn ein Programm bei dir weiter hörbar sein, aber nicht im Stream auftauchen soll** (z. B. Discord-Benachrichtigungen): Windows-Einstellungen → System → Sound → **Lautstärkemixer** → beim Programm **„Von Aufnahme ausschließen“** wählen. Der Knopf „Lautstärkemixer öffnen“ im Panel bringt dich direkt hin. Die Einstellung bleibt gespeichert.
+
+## Klar und flüssig: realistische Einstellungen
+
+- **Im WLAN**: 1920er Breite, 24–30 fps, Qualität „Hoch“ – hier geht es über die volle Leitung und sieht top aus.
+- **Über den Tunnel** (trycloudflare): 1280–1600 Breite, 10–15 fps, Qualität „Mittel“. Der Tunnel ist der Flaschenhals, nicht euer Internet – echte 1080p bei 30 fps bräuchten dort stabil 20+ Mbit/s. Der Client bremst sich bei Engpässen inzwischen selbst runter und lässt dabei **Video fallen, nie Ton**.
+- **Ein Monitor statt zweier**: Im Panel unter Ziel **Monitor** den gewünschten auswählen – „Hauptbildschirm“ nimmt unter Hyprland den fokussierten. „Alle Monitore“ nimmt den kompletten Desktop auf, das ist deutlich langsamer (und über einen Tunnel nie flüssig).
+
+## Updates
+
+Einfach denselben Installer noch mal laufen lassen – läuft die App dabei, wird sie beendet, aktualisiert und **automatisch neu gestartet**:
+
+```powershell
+irm https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.ps1 | iex
+```
+
+bzw.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.sh | bash
+```
 
 ## Wenn was klemmt
 
@@ -54,10 +80,14 @@ Läuft. Beim Zuschauer einmal auf den Lautsprecher-Knopf klicken, sonst bleibt d
 |---|---|
 | „Warte auf Freigabe…“ hängt | Der Streamer muss im Panel unter **Anfragen** auf **Annehmen** klicken |
 | Kein Ton | Im Viewer erscheint unten ein **gelber Hinweis** – einmal irgendwo auf die Seite klicken, dann läuft der Ton (Browser-Regel). Beim Streamer muss „Systemton streamen“ angehakt sein |
+| Ton knistert oder rauscht | Seite im Browser neu laden (F5) – seit v0.4.0 nimmt der Viewer die Tonrate des Geräts selbst, das behebt Knistern auf PipeWire-Systemen |
+| „Ton –“ in der Statuszeile | Der Streamer sendet gar keinen Ton. Auf Linux fehlt dann meist parec: `sudo pacman -S libpulse` |
+| Zwei Bildschirme im Stream | Im Panel unter Ziel **Monitor** den einzelnen auswählen (nicht „Alle Monitore“) |
 | „Stream nicht gefunden“ | Der andere hat noch nicht auf **Stream starten** gedrückt (die Sitzungs-ID allein reicht nicht) |
 | Omarchy meldet „grim fehlt“ | `sudo pacman -S grim` |
 | Bild ruckelig oder viel Traffic | Im Panel „Bilder pro Sekunde“ auf 10 und „Maximale Breite“ auf 1280 |
 | Tunnel-Adresse ändert sich | Sie bleibt, solange der Tunnel läuft. Nach einem Neustart einfach die neue Adresse einmal neu eintragen |
+| Update gemacht, App läuft noch alt | Einfach den Installer noch mal laufen lassen – er beendet die App, aktualisiert und startet sie neu |
 
 ## Firewall
 

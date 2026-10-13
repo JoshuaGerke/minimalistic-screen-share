@@ -141,6 +141,7 @@ func (s *grimSource) Grab() (*image.RGBA, error) {
 type hyprMonitor struct {
 	Name       string
 	X, Y, W, H int
+	Focused    bool
 }
 
 type hyprClient struct {
@@ -156,13 +157,14 @@ func hyprMonitors() ([]hyprMonitor, error) {
 	var raw []struct {
 		Name                string `json:"name"`
 		X, Y, Width, Height int
+		Focused             bool `json:"focused"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, err
 	}
 	mons := make([]hyprMonitor, len(raw))
 	for i, m := range raw {
-		mons[i] = hyprMonitor{Name: m.Name, X: m.X, Y: m.Y, W: m.Width, H: m.Height}
+		mons[i] = hyprMonitor{Name: m.Name, X: m.X, Y: m.Y, W: m.Width, H: m.Height, Focused: m.Focused}
 	}
 	return mons, nil
 }

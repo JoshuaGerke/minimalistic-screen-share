@@ -238,6 +238,9 @@ func (s *Session) notifyStatus() {
 
 func (s *Session) Options() Options { return s.opts }
 
+// Done ist geschlossen, sobald die Sitzung beendet ist.
+func (s *Session) Done() <-chan struct{} { return s.stopped }
+
 // Stop beendet die Sitzung und wartet, bis die Sende-Schleifen stehen.
 func (s *Session) Stop() {
 	s.once.Do(func() {
