@@ -19,6 +19,8 @@
   let frameCount = 0, byteCount = 0, lastFrameAt = 0;
   let fps = 0, kbps = 0, rtt = 0;
   let pingTimer = null, statTimer = null, lastPing = 0;
+  let lastPong = 0, lastGoodState = 'connecting', serverReconnecting = false;
+  let joinToken = '';
   let reconnectTimer = null, reconnectDelay = 1000;
 
   // Audio
@@ -26,9 +28,28 @@
 
   /* ---------- Verbindung ---------- */
 
+  // Ein Token pro Raum und Browser: Damit darf man nach einem
+  // Verbindungsabbruch ohne neue Freigabe wieder rein.
+  function tokenFor(roomName) {
+    const key = 'mss-token-' + roomName;
+    let token = '';
+    try { token = localStorage.getItem(key) || ''; } catch (e) { /* egal */ }
+    if (!token) {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      token = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+      try { localStorage.setItem(key, token); } catch (e) { /* egal */ }
+    }
+    return token;
+  }
+
   function connect() {
     cleanup();
     wantConnect = true;
+    lastPong = 0;
+    serverReconnecting = false;
+    lastGoodState = 'connecting';
+    joinToken = tokenFor(room);
     setState('connecting');
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     try {
@@ -38,7 +59,7 @@
     }
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
-      ws.send(JSON.stringify({ t: 'join', room, role: 'viewer', name: playerName }));
+      ws.send(JSON.stringify({ t: 'join', room, role: 'viewer', name: playerName, token: joinToken }));
       startPing();
     };
     ws.onmessage = (ev) => {
@@ -97,6 +118,7 @@
         if (state === 'connecting') setState('approval');
         break;
       case 'allowed':
+        serverReconnecting = false;
         if (state === 'approval') setState('waiting');
         break;
       case 'denied':
@@ -116,14 +138,19 @@
         break;
       case 'pong':
         rtt = Math.max(0, performance.now() - lastPing);
+        lastPong = performance.now();
+        if (state === 'reconnecting' && !serverReconnecting) setState(lastGoodState);
         break;
       case 'reconnecting':
+        serverReconnecting = true;
         setState('reconnecting');
         break;
       case 'waiting':
+        serverReconnecting = false;
         if (state === 'reconnecting') setState('approval');
         break;
       case 'live':
+        serverReconnecting = false;
         setState('live');
         break;
       case 'ended':
@@ -254,6 +281,7 @@
   function setState(next) {
     if (state === next && next !== 'live') return;
     state = next;
+    if (next === 'live' || next === 'waiting' || next === 'approval') lastGoodState = next;
     const dot = $('#status-dot');
     dot.className = 'dot';
     const ov = $('#overlay-msg');
@@ -340,7 +368,12 @@
     $('#stat-ping').textContent = rtt ? `Ping ${Math.round(rtt)} ms` : 'Ping –';
     $('#stat-viewers').textContent = `${viewers} Zuschauer`;
 
-    if (state === 'live' && lastFrameAt && now - lastFrameAt > 2500) {
+    // Nur wenn wirklich keine Antworten mehr kommen, ist die Verbindung
+    // unterbrochen. Ein stilles Bild ist kein Fehler: Unveränderte Frames
+    // werden bewusst nicht verschickt.
+    if (ws && ws.readyState === WebSocket.OPEN && lastPong &&
+        (state === 'live' || state === 'waiting' || state === 'approval') &&
+        now - lastPong > 15000) {
       setState('reconnecting');
     }
   }

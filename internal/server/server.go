@@ -28,6 +28,7 @@ const (
 	sendQueue      = 128
 	maxPending     = 20
 	hostGrace      = 20 * time.Second
+	viewerTokenTTL = 10 * time.Minute
 )
 
 var roomPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
@@ -54,16 +55,20 @@ type room struct {
 	grace      *time.Timer
 	autoAccept bool
 	nextID     uint64
+	// tokens merkt sich kurzzeitig freigegebene Zuschauer, damit ein
+	// Verbindungsabbruch keine neue Freigabe nötig macht.
+	tokens map[string]time.Time
 }
 
 type client struct {
-	srv  *Server
-	conn *websocket.Conn
-	send chan []byte
-	role string
-	name string
-	room *room
-	id   uint64
+	srv   *Server
+	conn  *websocket.Conn
+	send  chan []byte
+	role  string
+	name  string
+	room  *room
+	id    uint64
+	token string
 
 	mu     sync.Mutex
 	closed bool
@@ -139,6 +144,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if c.name == "" {
 		c.name = "Unbekannt"
 	}
+	c.token = strings.TrimSpace(join.Token)
 
 	if err := s.join(c, code); err != nil {
 		c.fail(err.Error())
@@ -216,6 +222,19 @@ func (s *Server) join(c *client, code string) error {
 	c.enqueueControl(proto.Control{T: "joined", Room: code, N: len(rm.viewers)})
 	if rm.host == nil {
 		c.enqueueControl(proto.Control{T: "reconnecting"})
+	}
+
+	// Wer vor kurzem schon einmal freigegeben wurde, darf nach einem
+	// Verbindungsabbruch direkt wieder rein.
+	if c.token != "" {
+		if exp, ok := rm.tokens[c.token]; ok && time.Now().Before(exp) {
+			rm.tokens[c.token] = time.Now().Add(viewerTokenTTL)
+			rm.viewers[c] = struct{}{}
+			c.enqueueControl(proto.Control{T: "allowed"})
+			s.log.Printf("Raum %q: Zuschauer %s wieder dabei (%d)", code, c.name, len(rm.viewers))
+			s.sendViewersLocked(rm)
+			return nil
+		}
 	}
 
 	if rm.autoAccept && rm.host != nil {
@@ -314,6 +333,14 @@ func (s *Server) allow(host *client, id uint64, accept bool) {
 	delete(rm.pending, target)
 	if accept {
 		rm.viewers[target] = struct{}{}
+		// Freigabe kurz merken, damit ein Reconnect nicht wieder klopfen muss.
+		if target.token != "" {
+			if rm.tokens == nil {
+				rm.tokens = map[string]time.Time{}
+			}
+			rm.pruneTokens()
+			rm.tokens[target.token] = time.Now().Add(viewerTokenTTL)
+		}
 		target.enqueueControl(proto.Control{T: "allowed"})
 		s.log.Printf("Raum %q: %s darf zuschauen (%d)", rm.code, target.name, len(rm.viewers))
 		s.sendViewersLocked(rm)
@@ -325,6 +352,16 @@ func (s *Server) allow(host *client, id uint64, accept bool) {
 
 	if !accept {
 		target.close()
+	}
+}
+
+// pruneTokens wirft abgelaufene Freigaben weg. Der Aufrufer muss s.mu halten.
+func (rm *room) pruneTokens() {
+	now := time.Now()
+	for t, exp := range rm.tokens {
+		if now.After(exp) {
+			delete(rm.tokens, t)
+		}
 	}
 }
 

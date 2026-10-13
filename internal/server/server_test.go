@@ -36,13 +36,19 @@ type peer struct {
 
 func dial(t *testing.T, ts *httptest.Server, room, role string) *peer {
 	t.Helper()
+	return dialToken(t, ts, room, role, "")
+}
+
+func dialToken(t *testing.T, ts *httptest.Server, room, role, token string) *peer {
+	t.Helper()
 	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	if err := conn.WriteJSON(proto.Control{T: "join", Room: room, Role: role, Name: role}); err != nil {
+	join := proto.Control{T: "join", Room: room, Role: role, Name: role, Token: token}
+	if err := conn.WriteJSON(join); err != nil {
 		t.Fatalf("Join senden: %v", err)
 	}
 	return &peer{t: t, conn: conn}
@@ -193,6 +199,50 @@ func TestPendingSurvivesHostReconnect(t *testing.T) {
 	knock := host2.waitControl("knock")
 	host2.send(proto.Control{T: "allow", ID: knock.ID})
 	viewer.waitControl("allowed")
+}
+
+// waitViewers wartet auf einen Zuschauerstand mit genau dieser Zahl.
+func (p *peer) waitViewers(n int) proto.Control {
+	p.t.Helper()
+	for {
+		ctl := p.waitControl("viewers")
+		if ctl.N == n {
+			return ctl
+		}
+	}
+}
+
+func TestViewerTokenSkipsSecondApproval(t *testing.T) {
+	ts := newTestServer(t, time.Second, 8)
+
+	host := dial(t, ts, "token-raum", "host")
+	host.waitControl("joined")
+
+	const token = "0123456789abcdef"
+	viewer := dialToken(t, ts, "token-raum", "viewer", token)
+	viewer.waitControl("joined")
+	knock := host.waitControl("knock")
+	host.send(proto.Control{T: "allow", ID: knock.ID})
+	viewer.waitControl("allowed")
+
+	// Verbindung reißt ab ...
+	viewer.conn.Close()
+	host.waitViewers(0)
+
+	// ... und darf mit demselben Token ohne neue Freigabe wieder rein.
+	viewer2 := dialToken(t, ts, "token-raum", "viewer", token)
+	viewer2.waitControl("joined")
+	viewer2.waitControl("allowed")
+	if ctl := host.waitViewers(1); len(ctl.Names) != 1 || ctl.Names[0] != "viewer" {
+		t.Fatalf("Zuschauer nach Token-Reconnect: %+v", ctl)
+	}
+
+	// Ein fremdes Token bekommt keine Freigabe.
+	stranger := dialToken(t, ts, "token-raum", "viewer", "fremdes-token")
+	stranger.waitControl("joined")
+	if knock2 := host.waitControl("knock"); knock2.Name != "viewer" {
+		t.Fatalf("fremder Zuschauer sollte klopfen: %+v", knock2)
+	}
 }
 
 func TestJoinErrors(t *testing.T) {

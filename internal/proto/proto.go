@@ -36,6 +36,7 @@ type Control struct {
 	ID    uint64   `json:"id,omitempty"`
 	Names []string `json:"names,omitempty"`
 	On    bool     `json:"on,omitempty"`
+	Token string   `json:"token,omitempty"`
 }
 
 // FramePacket baut ein Binärpaket mit einem JPEG-Frame.
