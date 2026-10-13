@@ -37,30 +37,33 @@ Der Viewer im Browser: schwarze Bühne mit dem Stream, oben eine Leiste mit Raum
 
 ## Installation
 
-Es gibt keine Installer – ein Binary, das reicht.
+Fertige Pakete liegen auf der [Release-Seite](https://github.com/JoshuaGerke/minimalistic-screen-share/releases) – oder gleich installieren:
 
 ### Windows
 
-Voraussetzung: Go 1.21 oder neuer.
+PowerShell öffnen:
 
 ```powershell
-.\build.ps1            # baut bin\mss-share.exe, bin\mss-relay.exe, bin\mss-viewer.exe
-.\bin\mss-share.exe    # Symbol erscheint im Infobereich (Win 11: hinter dem Pfeil)
+irm https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.ps1 | iex
 ```
 
-`build.ps1` baut die Share-App als reine GUI-Anwendung, es blitzt also kein Konsolenfenster auf. Logs landen neben der Einstellungsdatei in `%APPDATA%\minimalistic-screen-share\share.log`.
+Der Installer holt die neueste Version, legt sie unter `%LOCALAPPDATA%\Programs\minimalistic-screen-share` ab und richtet Startmenü-Eintrag, PATH und einen Eintrag in „Apps & Features“ ein. Kein Admin nötig, es wird nichts in die Registry geschrieben außer dem Deinstallations-Eintrag für den eigenen Benutzer.
 
-### Arch Linux / Omarchy
+Alternativ das ZIP von der Release-Seite entpacken und darin `.\install.ps1` starten – der nimmt dann die mitgelieferten Binaries. Liegt der Installer in einem Repo-Checkout, baut er die Binaries selbst (Go vorausgesetzt). `-Autostart` startet die App zusätzlich beim Anmelden, `-StartNow` direkt nach der Installation.
 
-Im `packaging/`-Ordner liegt ein PKGBUILD:
+Deinstallieren: `.\uninstall.ps1` (oder Windows-Einstellungen → Apps); `-Purge` löscht auch die Einstellungen.
+
+### Linux
 
 ```bash
-cd packaging
-makepkg -si
-mss-share --settings
+curl -fsSL https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.sh | bash
 ```
 
-Untermotor (einfach per pacman nachinstallieren, falls nicht da):
+Der Installer legt die Binaries nach `~/.local/bin` und dazu einen Eintrag ins Anwendungsmenü. Extras: `--autostart` (beim Anmelden starten), `--relay` (Relay als systemd-User-Dienst auf Port 8080 einrichten), `--from-github` (Download erzwingen), `--bin-dir` (anderer Zielordner).
+
+Deinstallieren: `uninstall.sh` (`--purge` löscht auch die Einstellungen).
+
+Untermotor für die Aufnahme – einfach per pacman nachinstallieren, falls nicht schon da:
 
 | Paket   | Wofür                                        |
 |---------|----------------------------------------------|
@@ -71,12 +74,24 @@ Untermotor (einfach per pacman nachinstallieren, falls nicht da):
 
 Fensteraufnahme läuft unter Hyprland über `hyprctl`. Unter X11 fängt `mss-share` auch ohne Extra-Pakete den Bildschirm ein.
 
-### Ohne Paketverwaltung
+### Arch Linux / Omarchy
+
+Wer es lieber über pacman verwaltet, nimmt das PKGBUILD:
+
+```bash
+cd packaging
+makepkg -si
+mss-share --settings
+```
+
+### Aus dem Quelltext
 
 ```bash
 make            # baut bin/mss-share, bin/mss-relay, bin/mss-viewer für das laufende System
 make windows    # oder: Cross-Build für Windows
 ```
+
+Unter Windows: `.\build.ps1` baut `bin\mss-share.exe` als reine GUI-Anwendung (kein Konsolenfenster); Logs landen in `%APPDATA%\minimalistic-screen-share\share.log`.
 
 ## Relay aufsetzen
 
@@ -148,7 +163,7 @@ Aufnahme und Ton werden im Client zu JPEG-Bildern und rohem PCM verpackt und üb
 - Opus-Ton statt PCM
 - effizientere Frames (WebP oder VP8) für Bewegung
 - Bereichsauswahl unter Windows
-- Autostart-Schalter im Panel
+- Autostart-Schalter im Panel (bisher nur über die Installer)
 - AUR-Paket
 
 ## Lizenz
