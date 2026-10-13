@@ -288,11 +288,38 @@ func (s *Server) leave(c *client) {
 
 func (s *Server) hostTimeout(code string, rm *room) {
 	s.mu.Lock()
-	if s.rooms[code] != rm || rm.host != nil {
+	stale := s.rooms[code] != rm || rm.host != nil
+	s.mu.Unlock()
+	if stale {
+		return
+	}
+	s.closeRoom(rm)
+}
+
+// endRoomNow beendet den Raum sofort – der Host hat absichtlich gestoppt.
+func (s *Server) endRoomNow(host *client) {
+	s.mu.Lock()
+	rm := host.room
+	if rm == nil || rm.host != host {
 		s.mu.Unlock()
 		return
 	}
-	delete(s.rooms, code)
+	if rm.grace != nil {
+		rm.grace.Stop()
+		rm.grace = nil
+	}
+	s.mu.Unlock()
+	s.closeRoom(rm)
+}
+
+// closeRoom wirft den Raum weg und schickt allen Beteiligten "ended".
+func (s *Server) closeRoom(rm *room) {
+	s.mu.Lock()
+	if existing, ok := s.rooms[rm.code]; !ok || existing != rm {
+		s.mu.Unlock()
+		return
+	}
+	delete(s.rooms, rm.code)
 	all := make([]*client, 0, len(rm.viewers)+len(rm.pending))
 	for v := range rm.viewers {
 		all = append(all, v)
@@ -300,15 +327,17 @@ func (s *Server) hostTimeout(code string, rm *room) {
 	for p := range rm.pending {
 		all = append(all, p)
 	}
+	s.log.Printf("Raum %q: %d Teilnehmer werden informiert", rm.code, len(all))
 	rm.viewers = map[*client]struct{}{}
 	rm.pending = map[*client]struct{}{}
+	rm.host = nil
 	s.mu.Unlock()
 
 	for _, v := range all {
 		v.enqueueControl(proto.Control{T: "ended"})
 		v.close()
 	}
-	s.log.Printf("Raum %q: geschlossen", code)
+	s.log.Printf("Raum %q: geschlossen", rm.code)
 }
 
 // allow entscheidet über eine offene Anfrage.
@@ -496,6 +525,10 @@ func (c *client) readLoop() {
 		case "auto":
 			if c.role == "host" {
 				c.srv.setAutoAccept(c, ctl.On)
+			}
+		case "bye":
+			if c.role == "host" {
+				c.srv.endRoomNow(c)
 			}
 		default:
 			if c.role == "host" {

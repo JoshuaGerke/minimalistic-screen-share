@@ -240,7 +240,12 @@ func (s *Session) Options() Options { return s.opts }
 
 // Stop beendet die Sitzung und wartet, bis die Sende-Schleifen stehen.
 func (s *Session) Stop() {
-	s.once.Do(func() { close(s.stop) })
+	s.once.Do(func() {
+		// Dem Relay Bescheid geben: Wir hören absichtlich auf. Dann beenden
+		// die Zuschauer sofort statt das Reconnect-Fenster abzuwarten.
+		s.writeJSON(proto.Control{T: "bye"})
+		close(s.stop)
+	})
 	<-s.stopped
 }
 
@@ -386,7 +391,22 @@ func (s *Session) connectAndStream() error {
 	}
 
 	stop := make(chan struct{})
-	defer close(stop)
+	var stopOnce sync.Once
+	doStop := func() { stopOnce.Do(func() { close(stop) }) }
+	defer doStop()
+
+	// Kommt Stop() von außen, müssen die Sendeschleifen sofort aufhören –
+	// sonst hängt das Beenden bei laufender Verbindung.
+	watcher := make(chan struct{})
+	defer close(watcher)
+	go func() {
+		select {
+		case <-s.stop:
+			doStop()
+		case <-watcher:
+		}
+	}()
+
 	var wg sync.WaitGroup
 	errCh := make(chan error, 3)
 
@@ -412,8 +432,14 @@ func (s *Session) connectAndStream() error {
 		}()
 	}
 
-	err = <-errCh
-	close(stop)
+	select {
+	case err = <-errCh:
+	case <-s.stop:
+		doStop()
+		wg.Wait()
+		return nil
+	}
+	doStop()
 	wg.Wait()
 	if err == nil {
 		err = errors.New("Verbindung beendet")

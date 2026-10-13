@@ -264,6 +264,23 @@ label.check input { width: auto; accent-color: var(--accent); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.audio-hint {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(240, 178, 50, .95);
+  color: #1e1f22;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+  pointer-events: none;
+  z-index: 6;
+  animation: pulse 2s infinite;
+}
+
 .stats {
   height: 30px;
   flex: none;

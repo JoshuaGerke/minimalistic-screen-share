@@ -53,11 +53,20 @@ Läuft. Beim Zuschauer einmal auf den Lautsprecher-Knopf klicken, sonst bleibt d
 | Problem | Lösung |
 |---|---|
 | „Warte auf Freigabe…“ hängt | Der Streamer muss im Panel unter **Anfragen** auf **Annehmen** klicken |
-| Kein Ton | Im Viewer auf den Lautsprecher-Knopf klicken; beim Streamer muss „Systemton streamen“ angehakt sein |
+| Kein Ton | Im Viewer erscheint unten ein **gelber Hinweis** – einmal irgendwo auf die Seite klicken, dann läuft der Ton (Browser-Regel). Beim Streamer muss „Systemton streamen“ angehakt sein |
 | „Stream nicht gefunden“ | Der andere hat noch nicht auf **Stream starten** gedrückt (die Sitzungs-ID allein reicht nicht) |
 | Omarchy meldet „grim fehlt“ | `sudo pacman -S grim` |
 | Bild ruckelig oder viel Traffic | Im Panel „Bilder pro Sekunde“ auf 10 und „Maximale Breite“ auf 1280 |
 | Tunnel-Adresse ändert sich | Sie bleibt, solange der Tunnel läuft. Nach einem Neustart einfach die neue Adresse einmal neu eintragen |
+
+## Firewall
+
+Ihr braucht **keine eingehenden Ports** – beide Seiten bauen nur Verbindungen nach außen auf (zum Relay bzw. Tunnel). Das gilt auch für Omarchy/Arch mit ufw oder nftables: Standard-Regeln blocken eingehend, ausgehend ist alles frei. Der Ton läuft über dieselbe Verbindung, dafür ist nie ein Port nötig.
+
+Zwei Ausnahmen, beide betreffen nur den **Direktbetrieb im WLAN ohne Tunnel**:
+
+- **Windows**: Beim ersten Start fragt die Firewall, ob `mss-share` ins Netzwerk darf → **Erlauben**. Wurde die Meldung weggeklickt: Windows-Sicherheit → Firewall und Netzwerkschutz → „Eine App durch die Firewall lassen“ → bei `mss-share` beide Haken setzen.
+- **Linux mit aktiver Firewall**: Dort muss Port **8080 eingehend** offen sein, wenn Freunde direkt (ohne Tunnel) auf den eingebauten Relay zugreifen sollen – z. B. `sudo ufw allow 8080/tcp`.
 
 ## Was macht der Tunnel?
 

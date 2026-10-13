@@ -25,6 +25,7 @@
 
   // Audio
   let actx = null, gain = null, nextTime = 0, muted = false, audioRate = 48000;
+  let audioEnabled = false, audioPeak = 0, audioUnlocked = false;
 
   /* ---------- Verbindung ---------- */
 
@@ -131,6 +132,8 @@
           applyCanvasSize();
         }
         if (m.rate) audioRate = m.rate;
+        if (typeof m.audio === 'boolean') audioEnabled = m.audio;
+        updateAudioButton();
         setState('live');
         break;
       case 'viewers':
@@ -241,10 +244,18 @@
     const buf = actx.createBuffer(2, frames, audioRate);
     const l = buf.getChannelData(0);
     const r = buf.getChannelData(1);
+    let peak = 0;
     for (let i = 0; i < frames; i++) {
-      l[i] = dv.getInt16(i * 4, true) / 32768;
-      r[i] = dv.getInt16(i * 4 + 2, true) / 32768;
+      const lv = dv.getInt16(i * 4, true) / 32768;
+      const rv = dv.getInt16(i * 4 + 2, true) / 32768;
+      l[i] = lv;
+      r[i] = rv;
+      const a = lv < 0 ? -lv : lv;
+      const b = rv < 0 ? -rv : rv;
+      if (a > peak) peak = a;
+      if (b > peak) peak = b;
     }
+    if (peak > audioPeak) audioPeak = peak;
     const src = actx.createBufferSource();
     src.buffer = buf;
     src.connect(gain);
@@ -254,15 +265,15 @@
   function advanceSilence(seconds) {
     if (!actx || actx.state !== 'running') return;
     const now = actx.currentTime;
-    if (nextTime < now + 0.03) nextTime = now + 0.12;
-    if (nextTime > now + 0.6) nextTime = now + 0.15;
+    if (nextTime < now + 0.03) nextTime = now + 0.2;
+    if (nextTime > now + 0.8) nextTime = now + 0.25;
     nextTime += seconds;
   }
 
   function schedule(src, duration) {
     const now = actx.currentTime;
-    if (nextTime < now + 0.03) nextTime = now + 0.12;   // Unterlauf: kurz neu puffern
-    if (nextTime > now + 0.6) nextTime = now + 0.15;    // zu weit voraus: aufholen
+    if (nextTime < now + 0.03) nextTime = now + 0.2;   // Unterlauf: neu puffern
+    if (nextTime > now + 0.8) nextTime = now + 0.25;   // zu weit voraus: aufholen
     src.start(nextTime);
     nextTime += duration;
   }
@@ -274,7 +285,22 @@
     btn.querySelector('.ico-on').classList.toggle('hidden', muted);
     btn.querySelector('.ico-off').classList.toggle('hidden', !muted);
     btn.title = needsClick ? 'Ton aktivieren' : (muted ? 'Ton an' : 'Ton aus');
+    const hint = $('#audio-hint');
+    if (hint) hint.classList.toggle('hidden', !(needsClick && !muted && audioEnabled));
   }
+
+  // Browser erlauben Ton erst nach einer Interaktion: Der erste Klick oder
+  // Tastendruck irgendwo auf der Seite schaltet ihn frei.
+  function unlockAudio() {
+    audioUnlocked = true;
+    ensureAudio();
+    if (actx && actx.state !== 'running') {
+      actx.resume().then(updateAudioButton).catch(() => {});
+    }
+  }
+
+  document.addEventListener('click', unlockAudio, true);
+  document.addEventListener('keydown', unlockAudio, true);
 
   /* ---------- Oberfläche ---------- */
 
@@ -366,7 +392,16 @@
       ? `${(kbps / 1000).toFixed(1).replace('.', ',')} Mbit/s`
       : `${kbps} kbit/s`;
     $('#stat-ping').textContent = rtt ? `Ping ${Math.round(rtt)} ms` : 'Ping –';
+    const level = Math.round(audioPeak * 100);
+    audioPeak = 0;
+    $('#stat-audio').textContent = audioEnabled ? `Ton ${level}%` : 'Ton –';
     $('#stat-viewers').textContent = `${viewers} Zuschauer`;
+
+    // Kontext kann vom Browser schlafen gelegt werden – nach einer
+    // Interaktion wecken wir ihn selbst wieder auf.
+    if (actx && audioUnlocked && actx.state === 'suspended') {
+      actx.resume().then(updateAudioButton).catch(() => {});
+    }
 
     // Nur wenn wirklich keine Antworten mehr kommen, ist die Verbindung
     // unterbrochen. Ein stilles Bild ist kein Fehler: Unveränderte Frames

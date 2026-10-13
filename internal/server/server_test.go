@@ -245,6 +245,26 @@ func TestViewerTokenSkipsSecondApproval(t *testing.T) {
 	}
 }
 
+func TestHostByeEndsRoomImmediately(t *testing.T) {
+	// Langes Reconnect-Fenster: Nur "bye" darf hier wirken.
+	ts := newTestServer(t, 30*time.Second, 8)
+
+	host := dial(t, ts, "bye-raum", "host")
+	host.waitControl("joined")
+	viewer := dial(t, ts, "bye-raum", "viewer")
+	viewer.waitControl("joined")
+	knock := host.waitControl("knock")
+	host.send(proto.Control{T: "allow", ID: knock.ID})
+	viewer.waitControl("allowed")
+
+	start := time.Now()
+	host.send(proto.Control{T: "bye"})
+	viewer.waitControl("ended")
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("Stream-Ende kam zu spät: %s", elapsed)
+	}
+}
+
 func TestJoinErrors(t *testing.T) {
 	ts := newTestServer(t, time.Second, 1)
 

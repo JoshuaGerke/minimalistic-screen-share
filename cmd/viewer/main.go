@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,6 +21,22 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/stream"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/version"
 )
+
+// int16Peak liefert die größte Amplitude im PCM-Paket – damit sieht man,
+// ob echter Ton ankommt oder nur Stille.
+func int16Peak(pcm []byte) int32 {
+	var max int32
+	for i := 0; i+1 < len(pcm); i += 2 {
+		v := int32(int16(binary.LittleEndian.Uint16(pcm[i:])))
+		if v < 0 {
+			v = -v
+		}
+		if v > max {
+			max = v
+		}
+	}
+	return max
+}
 
 func main() {
 	server := flag.String("server", "http://localhost:8080", "Relay-Adresse")
@@ -53,6 +70,7 @@ func main() {
 	fmt.Printf("mss-viewer %s – Sitzung %q auf %s\n", version.Version, *room, *server)
 
 	var frames, audio, bytesIn atomic.Int64
+	var peak atomic.Int64
 	var sizeW, sizeH atomic.Int64
 	var mu sync.Mutex
 	var lastFrame []byte
@@ -105,7 +123,12 @@ func main() {
 					lastFrame = append(lastFrame[:0], data[proto.FrameHeaderLen:]...)
 					mu.Unlock()
 				}
-			case proto.MsgAudio, proto.MsgSilence:
+			case proto.MsgAudio:
+				audio.Add(1)
+				if p := int16Peak(data[proto.AudioHeaderLen:]); int64(p) > peak.Load() {
+					peak.Store(int64(p))
+				}
+			case proto.MsgSilence:
 				audio.Add(1)
 			}
 		}
@@ -124,8 +147,9 @@ func main() {
 		case <-ticker.C:
 			f := frames.Load()
 			b := bytesIn.Load()
-			line := fmt.Sprintf("%d fps · %d kbit/s · %d×%d · %d Tonpakete",
-				f-prevFrames, (b-prevBytes)*8/1000, sizeW.Load(), sizeH.Load(), audio.Load())
+			peakPct := int(peak.Swap(0)) * 100 / 32767
+			line := fmt.Sprintf("%d fps · %d kbit/s · %d×%d · %d Tonpakete · Tonpegel %d%%",
+				f-prevFrames, (b-prevBytes)*8/1000, sizeW.Load(), sizeH.Load(), audio.Load(), peakPct)
 			if *save != "" {
 				mu.Lock()
 				if len(lastFrame) > 0 {
