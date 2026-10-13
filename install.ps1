@@ -1,4 +1,4 @@
-﻿# Minimalistic Screen Share – Installer für Windows
+# Minimalistic Screen Share - Installer für Windows
 #
 # Nutzung (im entpackten Release-Ordner oder im Repo):
 #   .\install.ps1                installiert die Binaries aus diesem Ordner
@@ -6,17 +6,34 @@
 #   .\install.ps1 -FromGitHub    lädt die neueste Version von GitHub
 #   .\install.ps1 -Autostart     zusätzlich beim Anmelden starten
 #   .\install.ps1 -StartNow      am Ende direkt starten
+#   .\install.ps1 -Source DIR    Binaries aus DIR nehmen
 #
-# Deinstallieren: uninstall.ps1 (oder Windows-Einstellungen → Apps)
-
-param(
-    [switch]$FromGitHub,
-    [switch]$Autostart,
-    [switch]$StartNow,
-    [string]$Source = ""
-)
+# Einzeiler (ohne Parameter):  irm <raw-url> | iex
+# Deinstallieren: uninstall.ps1 oder Windows-Einstellungen > Apps
+#
+# Hinweis: absichtlich kein param()-Block und kein BOM. Bei "irm | iex"
+# würde PowerShell sonst den Skripttext selbst in den ersten Parameter
+# binden bzw. das BOM als Kommando interpretieren.
 
 $ErrorActionPreference = "Stop"
+
+$FromGitHub = $false
+$Autostart  = $false
+$StartNow   = $false
+$Source     = ""
+
+for ($i = 0; $i -lt $args.Count; $i++) {
+    $key = ($args[$i] -replace "^--?", "").ToLower()
+    switch ($key) {
+        "fromgithub" { $FromGitHub = $true }
+        "autostart"  { $Autostart = $true }
+        "startnow"   { $StartNow = $true }
+        "source" {
+            if ($i + 1 -lt $args.Count) { $i++; $Source = $args[$i] }
+        }
+        default { Write-Host "unbekannte Option: $($args[$i])" }
+    }
+}
 
 $AppName    = "Minimalistic Screen Share"
 $Version    = "0.1.0"   # wird beim Release automatisch auf die Tag-Version gesetzt
@@ -90,7 +107,7 @@ foreach ($f in @("uninstall.ps1", "README.md", "LICENSE")) {
     }
 }
 if (-not (Test-Path (Join-Path $InstallDir "mss-share.exe"))) {
-    throw "mss-share.exe nicht gefunden – bitte im Release-Ordner oder im Repo ausführen."
+    throw "mss-share.exe nicht gefunden. Bitte im Release-Ordner oder im Repo ausführen."
 }
 
 # --- Verknüpfungen ----------------------------------------------------------
@@ -139,8 +156,8 @@ if ($userPath -notlike "*$InstallDir*") {
 # --- fertig -----------------------------------------------------------------
 
 Write-Host ""
-Write-Host "Fertig. Das Symbol sitzt im Infobereich – bei Windows 11 hinter dem Pfeil."
-Write-Host "Start: Startmenü → $AppName, oder im Terminal: mss-share --settings"
+Write-Host "Fertig. Das Symbol sitzt im Infobereich - bei Windows 11 hinter dem Pfeil."
+Write-Host "Start über Startmenü oder im Terminal: mss-share --settings"
 Write-Host "Deinstallieren: uninstall.ps1"
 
 if ($StartNow) { Start-Process $target }

@@ -1,12 +1,22 @@
-﻿# Minimalistic Screen Share – Deinstallation unter Windows
+# Minimalistic Screen Share - Deinstallation unter Windows
 #
 # Nutzung:
 #   .\uninstall.ps1            entfernt Programm und Verknüpfungen
 #   .\uninstall.ps1 -Purge     entfernt zusätzlich die Einstellungen
-
-param([switch]$Purge)
+#
+# Hinweis: absichtlich kein param()-Block und kein BOM, damit auch
+# "irm <raw-url> | iex" sauber funktioniert.
 
 $ErrorActionPreference = "Stop"
+
+$Purge = $false
+foreach ($arg in $args) {
+    $key = ($arg -replace "^--?", "").ToLower()
+    switch ($key) {
+        "purge" { $Purge = $true }
+        default { Write-Host "unbekannte Option: $arg" }
+    }
+}
 
 $AppName    = "Minimalistic Screen Share"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\minimalistic-screen-share"
