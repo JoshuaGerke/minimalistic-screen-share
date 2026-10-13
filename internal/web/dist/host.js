@@ -29,6 +29,8 @@
     $('#cfg-width').value = String(cfg.max_width ?? 1600);
     $('#cfg-audio').checked = !!cfg.audio;
     $('#cfg-auto').checked = !!cfg.auto_accept;
+    $('#cfg-relay').checked = !!cfg.run_relay;
+    $('#cfg-publicurl').value = cfg.public_url || '';
     $('#cfg-cursor').checked = cfg.target ? !!cfg.target.cursor : true;
 
     const kindMap = { window: 'window', monitor: 'monitor', screen: 'screen', test: 'test', region: 'screen' };
@@ -95,6 +97,8 @@
       max_width: Number($('#cfg-width').value),
       audio: $('#cfg-audio').checked,
       auto_accept: $('#cfg-auto').checked,
+      run_relay: $('#cfg-relay').checked,
+      public_url: $('#cfg-publicurl').value.trim(),
       target: currentTarget(),
     };
     const res = await fetch('/api/config', { method: 'POST', body: JSON.stringify(body) });
@@ -158,6 +162,31 @@
       $('#status-label').textContent = pillLabel(s);
 
       renderRequests(s.pending || []);
+
+      // Relay- und Tunnel-Zustand
+      const relayHint = $('#relay-hint');
+      if (st.relay_running) {
+        relayHint.textContent = `Relay läuft auf ${st.relay_url} – im gleichen WLAN funktioniert der kopierte Link direkt.`;
+      } else {
+        relayHint.textContent = 'Relay ist aus – Server läuft dann woanders.';
+      }
+      const tunnelBox = $('#btn-tunnel');
+      const tunnelHint = $('#tunnel-hint');
+      tunnelBox.disabled = !!st.tunnel_busy;
+      tunnelBox.checked = !!st.tunnel_running || !!st.tunnel_busy;
+      if (st.tunnel_busy) {
+        tunnelHint.textContent = 'Tunnel wird aufgebaut (lädt beim ersten Mal cloudflared)…';
+        tunnelHint.style.color = 'var(--dim)';
+      } else if (st.tunnel_url) {
+        tunnelHint.textContent = 'Öffentlich erreichbar unter ' + st.tunnel_url;
+        tunnelHint.style.color = 'var(--green)';
+      } else if (st.tunnel_error) {
+        tunnelHint.textContent = 'Tunnel-Fehler: ' + st.tunnel_error;
+        tunnelHint.style.color = 'var(--red)';
+      } else {
+        tunnelHint.textContent = 'Aus. Einschalten, wenn Freunde nicht im selben WLAN sind.';
+        tunnelHint.style.color = 'var(--dim)';
+      }
 
       $('#stat-viewers').textContent = viewerText(s);
       $('#stat-res').textContent = s.w ? `${s.w}×${s.h}` : '–';
@@ -308,6 +337,11 @@
   $('#window-refresh').addEventListener('click', async () => {
     targets = await fetch('/api/targets').then((r) => r.json());
     fillTargets();
+  });
+
+  $('#btn-tunnel').addEventListener('change', async (ev) => {
+    await fetch('/api/tunnel', { method: 'POST', body: JSON.stringify({ on: ev.target.checked }) });
+    poll();
   });
 
   load();

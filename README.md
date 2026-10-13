@@ -2,12 +2,15 @@
 
 Bildschirm und Systemton teilen wie in Discord, nur klein: ein paar MB groß, ohne eigenes Fenster im Tray, Zuschauer brauchen nur einen Browser.
 
+**Schnellstart für zwei Leute:** [GUIDE.md](GUIDE.md) – installieren, Tunnel an, Link schicken, zuschauen.
+
 ## Warum
 
 Discord kann Screensharing, aber 1080p/60 gibt es nur mit Nitro, unter Linux ist das Mitschicken von Systemton unter Wayland ein Glücksspiel, und die App zieht gern ein paar hundert MB RAM plus ein eigenes Fenster. Ich wollte was, das im Infobereich sitzt, auf Windows und Arch (auch Omarchy/Hyprland) einfach läuft und sich auf das Nötigste beschränkt: Bildschirm oder Fenster, Ton dazu, Link teilen, fertig.
 
 ## Was es kann
 
+- **Ein Häkchen für die Verbindung**: Der Relay läuft im Client mit, ein Tunnel-Knopf macht dich ohne VPS und ohne Router-Einstellungen im Internet erreichbar
 - **Feste Sitzungs-ID pro PC** (z. B. `joshua-gerke-4f2a`): Du startest den Stream, die ID bleibt gleich, andere tippen sie ein oder öffnen deinen Link
 - **Zuschauer müssen freigegeben werden**: Wer rein will, klopft an – du bekommst eine Benachrichtigung und entscheidest im Panel. Auf Wunsch auch automatisch (ohne Nachfrage)
 - **Bildschirm, Monitor oder einzelnes Fenster** streamen, wahlweise mit Mauszeiger
@@ -98,13 +101,15 @@ Unter Windows: `.\build.ps1` baut `bin\mss-share.exe` als reine GUI-Anwendung (k
 
 ## Relay aufsetzen
 
-Irgendwer muss vermitteln. Fürs Heimnetz reicht der Rechner, auf dem auch gestreamt wird:
+Normalerweise musst du gar nichts aufsetzen: Der Relay läuft im Client mit (Häkchen „Relay läuft auf diesem PC mit“) und deckt das WLAN ab. Für Freunde außerhalb deines WLANs setzt du im Panel das Tunnel-Häkchen – der Client lädt sich cloudflared und veröffentlicht den Relay unter einer `https://…trycloudflare.com`-Adresse. Der geteilte Link und „Im Browser ansehen“ benutzen dann automatisch diese Adresse.
+
+Wer es lieber selbst in der Hand hat, nimmt den Standalone-Relay – im Heimnetz reicht der Rechner, auf dem auch gestreamt wird:
 
 ```bash
 mss-relay -addr :8080
 ```
 
-Für das Internet einen kleinen VPS nehmen, `mss-relay` laufen lassen (systemd-Unit liegt in `packaging/mss-relay.service`) und einen Reverse Proxy davorhängen, damit es `wss://` wird:
+Für dauerhaften Betrieb auf einem VPS: `mss-relay` laufen lassen (systemd-Unit liegt in `packaging/mss-relay.service`) und einen Reverse Proxy davorhängen, damit es `wss://` wird:
 
 ```
 # Caddy
@@ -113,7 +118,7 @@ share.example.com {
 }
 ```
 
-Im Panel dann `https://share.example.com` als Server eintragen. Der Relay ist absichtlich dumm: Er kennt Räume, schickt Daten stumpf weiter und hat keine Datenbank. Wer den Raumcode kennt, schaut zu – der Code ist das Passwort.
+Im Panel dann `https://share.example.com` als Server eintragen (oder als „Öffentliche Adresse“, wenn der eigene Stream weiter über den eingebauten Relay laufen soll). Der Relay ist absichtlich dumm: Er kennt Räume, schickt Daten stumpf weiter und hat keine Datenbank. Wer die Sitzungs-ID kennt, kann anfragen – zuschauen darf nur, wen du freigibst.
 
 ## Benutzung
 

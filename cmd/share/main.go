@@ -333,6 +333,8 @@ func runTray(logger *log.Logger, cfg config.Config, settingsOnly bool) {
 		waitSignal(a)
 	}
 	a.Stop()
+	a.StopTunnel()
+	a.StopRelay()
 }
 
 func waitSignal(a *app.App) {

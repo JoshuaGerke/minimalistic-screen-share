@@ -76,6 +76,16 @@
         <button class="btn" id="btn-open-viewer" type="button">Im Browser ansehen</button>
       </div>
       <p class="hint" id="copy-hint"></p>
+
+      <div class="field" style="margin-top:18px">
+        <label class="check"><input type="checkbox" id="btn-tunnel"> Im Internet erreichbar machen (Tunnel)</label>
+        <p class="hint" id="tunnel-hint"></p>
+      </div>
+      <div class="field">
+        <span>Öffentliche Adresse (optional, falls du eine eigene hast)</span>
+        <input id="cfg-publicurl" placeholder="https://share.example.com">
+      </div>
+      <p class="hint" id="relay-hint"></p>
     </div>
   </div>
 
@@ -136,6 +146,7 @@
           <label class="check"><input type="checkbox" id="cfg-audio"> Systemton streamen</label>
           <label class="check"><input type="checkbox" id="cfg-cursor"> Mauszeiger zeigen</label>
           <label class="check"><input type="checkbox" id="cfg-auto"> Zuschauer automatisch freigeben (ohne Nachfrage)</label>
+          <label class="check"><input type="checkbox" id="cfg-relay"> Relay läuft auf diesem PC mit (empfohlen)</label>
         </div>
       </div>
     </div>

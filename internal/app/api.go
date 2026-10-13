@@ -23,6 +23,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/api/stop", a.localOnly(a.handleStop))
 	mux.HandleFunc("/api/allow", a.localOnly(a.handleAllow))
 	mux.HandleFunc("/api/deny", a.localOnly(a.handleDeny))
+	mux.HandleFunc("/api/tunnel", a.localOnly(a.handleTunnel))
 	mux.Handle("/", hostIndex(web.FS()))
 	return mux
 }
@@ -133,6 +134,27 @@ func (a *App) handleKnockDecision(w http.ResponseWriter, r *http.Request, decide
 	if err := decide(body.ID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, a.Status())
+}
+
+// handleTunnel schaltet den Internet-Tunnel ein oder aus.
+func (a *App) handleTunnel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "ungültige Anfrage: "+err.Error())
+		return
+	}
+	if body.On {
+		a.StartTunnel()
+	} else {
+		a.StopTunnel()
 	}
 	writeJSON(w, http.StatusOK, a.Status())
 }

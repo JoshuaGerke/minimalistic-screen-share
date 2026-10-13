@@ -16,6 +16,7 @@ import (
 
 type Config struct {
 	Server     string         `json:"server"`
+	PublicURL  string         `json:"public_url,omitempty"`
 	Room       string         `json:"room"`
 	Name       string         `json:"name"`
 	FPS        int            `json:"fps"`
@@ -23,6 +24,7 @@ type Config struct {
 	MaxWidth   int            `json:"max_width"`
 	Audio      bool           `json:"audio"`
 	AutoAccept bool           `json:"auto_accept"`
+	RunRelay   bool           `json:"run_relay"`
 	Target     capture.Target `json:"target"`
 }
 
@@ -43,6 +45,7 @@ func Default() Config {
 		Quality:  70,
 		MaxWidth: 1600,
 		Audio:    true,
+		RunRelay: true,
 		Target:   capture.Primary(),
 	}
 }
@@ -137,8 +140,17 @@ func Load() Config {
 	cfg.MaxWidth = loaded.MaxWidth
 	cfg.Audio = loaded.Audio
 	cfg.AutoAccept = loaded.AutoAccept
+	cfg.PublicURL = loaded.PublicURL
 	if loaded.Target.Kind != "" {
 		cfg.Target = loaded.Target
+	}
+	// Fehlt der Schlüssel (Config aus einer älteren Version), bleibt der
+	// eingebaute Relay angeschaltet.
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(data, &probe) == nil {
+		if _, ok := probe["run_relay"]; ok {
+			cfg.RunRelay = loaded.RunRelay
+		}
 	}
 	cfg.normalize()
 	return cfg
