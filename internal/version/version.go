@@ -1,4 +1,5 @@
-// Paket version hält die Versionsnummer an einer Stelle.
+// Paket version hält die Versionsnummer an einer Stelle. Der Release-Workflow
+// überschreibt sie beim Bauen über -ldflags mit der Tag-Version.
 package version
 
-const Version = "0.1.0"
+var Version = "0.1.2"
