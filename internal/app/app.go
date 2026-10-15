@@ -31,6 +31,11 @@ type App struct {
 	last     stream.Status
 	port     int
 	onStatus func(stream.Status)
+	onNotify func(title, text string)
+	onQuit   func()
+	// copyPending: Der Stream läuft schon, der Link aber noch nicht (Tunnel
+	// baut sich auf). Sobald er steht, landet er in der Zwischenablage.
+	copyPending bool
 
 	relaySrv   *http.Server
 	relayPort  int
@@ -38,31 +43,33 @@ type App struct {
 	tunnelURL  string
 	tunnelErr  string
 	tunnelBusy bool
+	tunnelWant bool
 }
 
 // StatusView ist die Antwort von /api/status – Panel und Zweitinstanzen
 // erkennen daran, dass hier ein mss-Client läuft.
 type StatusView struct {
-	App           string        `json:"app"`
-	Version       string        `json:"version"`
-	Streaming     bool          `json:"streaming"`
-	Room          string        `json:"room"`
-	Server        string        `json:"server"`
-	ShareURL      string        `json:"share_url"`
-	PanelURL      string        `json:"panel_url"`
-	RelayRunning  bool          `json:"relay_running"`
-	RelayURL      string        `json:"relay_url,omitempty"`
-	TunnelRunning bool          `json:"tunnel_running"`
-	TunnelBusy    bool          `json:"tunnel_busy"`
-	TunnelURL     string        `json:"tunnel_url,omitempty"`
-	TunnelError   string        `json:"tunnel_error,omitempty"`
-	Stream        stream.Status `json:"stream"`
+	App         string        `json:"app"`
+	Version     string        `json:"version"`
+	Platform    string        `json:"platform"`
+	Streaming   bool          `json:"streaming"`
+	Room        string        `json:"room"`
+	Reach       string        `json:"reach"`
+	ShareURL    string        `json:"share_url"`
+	LinkReady   bool          `json:"link_ready"`
+	LinkNote    string        `json:"link_note,omitempty"`
+	LinkError   string        `json:"link_error,omitempty"`
+	PanelURL    string        `json:"panel_url"`
+	Autostart   bool          `json:"autostart"`
+	CanAutorun  bool          `json:"can_autostart"`
+	Stream      stream.Status `json:"stream"`
+	TargetLabel string        `json:"target_label"`
 }
 
-func New(log *log.Logger) *App {
+func New(log *log.Logger, cfg config.Config) *App {
 	return &App{
 		log:  log,
-		cfg:  config.Load(),
+		cfg:  cfg,
 		last: stream.Status{State: "idle"},
 	}
 }
@@ -74,7 +81,7 @@ func (a *App) Config() config.Config {
 }
 
 // SaveConfig prüft und speichert neue Einstellungen. Läuft gerade ein Stream,
-// wandert die Auto-Freigabe direkt in die laufende Sitzung.
+// greifen Bild-, Ton- und Freigabe-Einstellungen sofort.
 func (a *App) SaveConfig(c config.Config) error {
 	if err := c.Validate(); err != nil {
 		return err
@@ -83,46 +90,69 @@ func (a *App) SaveConfig(c config.Config) error {
 		return err
 	}
 	a.mu.Lock()
-	oldAccept := a.cfg.AutoAccept
-	oldRelay := a.cfg.RunRelay
+	old := a.cfg
 	sess := a.sess
 	a.cfg = c
 	a.mu.Unlock()
-	if sess != nil && oldAccept != c.AutoAccept {
-		sess.SetAutoAccept(c.AutoAccept)
-	}
-	if oldRelay != c.RunRelay {
-		if c.RunRelay {
-			if err := a.StartRelay(); err != nil {
-				a.log.Printf("Eingebauter Relay: %v", err)
-			}
-		} else {
-			a.StopRelay()
+
+	if sess != nil {
+		sess.SetParams(c.FPS, c.Quality, c.MaxWidth)
+		sess.SetAudio(c.Audio)
+		if old.AutoAccept != c.AutoAccept {
+			sess.SetAutoAccept(c.AutoAccept)
 		}
 	}
+	if old.Reach != c.Reach || old.Server != c.Server {
+		a.applyReach()
+	}
 	return nil
+}
+
+// applyReach bringt Relay und Tunnel in den Zustand, den der Modus verlangt.
+func (a *App) applyReach() {
+	reach := a.Config().Reach
+	if reach == config.ReachServer {
+		a.StopTunnel()
+		a.StopRelay()
+		return
+	}
+	if err := a.StartRelay(); err != nil {
+		a.log.Printf("Eingebauter Relay: %v", err)
+		a.mu.Lock()
+		a.tunnelErr = err.Error()
+		a.mu.Unlock()
+		return
+	}
+	if reach == config.ReachInternet {
+		a.StartTunnel()
+	} else {
+		a.StopTunnel()
+	}
 }
 
 func (a *App) Status() StatusView {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	link, ready, note, linkErr := a.linkLocked()
 	view := StatusView{
-		App:           "mss",
-		Version:       version.Version,
-		Streaming:     a.sess != nil,
-		Room:          a.cfg.Room,
-		Server:        a.cfg.Server,
-		ShareURL:      a.shareURLLocked(),
-		PanelURL:      a.panelURL(),
-		RelayRunning:  a.relaySrv != nil,
-		TunnelRunning: a.tunnel != nil,
-		TunnelBusy:    a.tunnelBusy,
-		TunnelURL:     a.tunnelURL,
-		TunnelError:   a.tunnelErr,
-		Stream:        a.last,
+		App:         "mss",
+		Version:     version.Version,
+		Platform:    platform(),
+		Streaming:   a.sess != nil,
+		Room:        a.cfg.Room,
+		Reach:       a.cfg.Reach,
+		ShareURL:    link,
+		LinkReady:   ready,
+		LinkNote:    note,
+		LinkError:   linkErr,
+		PanelURL:    a.panelURL(),
+		Autostart:   autostartEnabled(),
+		CanAutorun:  true,
+		Stream:      a.last,
+		TargetLabel: a.cfg.Target.Label(),
 	}
-	if a.relaySrv != nil {
-		view.RelayURL = fmt.Sprintf("http://%s:%d", localIP(), a.relayPort)
+	if a.sess != nil {
+		view.Stream = a.sess.Status()
 	}
 	return view
 }
@@ -134,9 +164,57 @@ func (a *App) SetOnStatus(fn func(stream.Status)) {
 	a.mu.Unlock()
 }
 
+// SetOnNotify hinterlegt, wie Hinweise beim Nutzer landen (Tray-Sprechblase).
+func (a *App) SetOnNotify(fn func(title, text string)) {
+	a.mu.Lock()
+	a.onNotify = fn
+	a.mu.Unlock()
+}
+
+// SetOnQuit hinterlegt, wie sich die App selbst beendet (für Updates).
+func (a *App) SetOnQuit(fn func()) {
+	a.mu.Lock()
+	a.onQuit = fn
+	a.mu.Unlock()
+}
+
+func (a *App) notify(title, text string) {
+	a.mu.Lock()
+	fn := a.onNotify
+	a.mu.Unlock()
+	if fn != nil {
+		fn(title, text)
+	}
+}
+
+// streamServer ist die Adresse, an die der eigene Stream geht.
+func (a *App) streamServer() (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfg.Reach == config.ReachServer {
+		return a.cfg.Server, nil
+	}
+	if a.relayPort == 0 {
+		return "", errors.New("der eingebaute Relay läuft nicht")
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", a.relayPort), nil
+}
+
 // Start beginnt zu streamen. Ziel und aktuelle Einstellungen wandern in die
-// Konfigdatei, damit der nächste Start gleich passt.
+// Konfigdatei, damit der nächste Start gleich passt. Der Link landet direkt
+// in der Zwischenablage – wie bei AnyDesk: klicken, einfügen, fertig.
 func (a *App) Start(target capture.Target) error {
+	target = resolveTarget(target)
+	if a.Config().Reach != config.ReachServer {
+		if err := a.StartRelay(); err != nil {
+			return err
+		}
+	}
+	srv, err := a.streamServer()
+	if err != nil {
+		return err
+	}
+
 	a.mu.Lock()
 	if a.sess != nil {
 		a.mu.Unlock()
@@ -152,7 +230,7 @@ func (a *App) Start(target capture.Target) error {
 	cfg.Save()
 
 	sess := stream.New(stream.Options{
-		Server:     cfg.Server,
+		Server:     srv,
 		Room:       cfg.Room,
 		Name:       cfg.Name,
 		FPS:        cfg.FPS,
@@ -165,6 +243,7 @@ func (a *App) Start(target capture.Target) error {
 	})
 	sess.SetOnChange(a.onSessionStatus)
 	a.sess = sess
+	a.copyPending = true
 	a.mu.Unlock()
 
 	go func() {
@@ -173,6 +252,7 @@ func (a *App) Start(target capture.Target) error {
 		if a.sess == sess {
 			a.sess = nil
 			a.last = stream.Status{State: "idle"}
+			a.copyPending = false
 		}
 		cb := a.onStatus
 		a.mu.Unlock()
@@ -181,10 +261,37 @@ func (a *App) Start(target capture.Target) error {
 		}
 	}()
 
-	if cfg.Audio {
-		go a.holdMutes(sess)
-	}
+	go a.holdMutes(sess)
+	a.copyLinkIfReady()
 	return nil
+}
+
+// resolveTarget macht aus "primary" (Panel: „Bildschirm“) den echten
+// Monitor – unter Hyprland den fokussierten, sonst den Hauptmonitor.
+func resolveTarget(t capture.Target) capture.Target {
+	if t.Kind != "primary" {
+		return t
+	}
+	p := capture.Primary()
+	p.Cursor = t.Cursor
+	return p
+}
+
+// copyLinkIfReady legt den Link nach dem Start einmal in die Zwischenablage.
+func (a *App) copyLinkIfReady() {
+	a.mu.Lock()
+	link, ready, _, _ := a.linkLocked()
+	if !a.copyPending || !ready {
+		a.mu.Unlock()
+		return
+	}
+	a.copyPending = false
+	a.mu.Unlock()
+	if err := copyToClipboard(link); err != nil {
+		a.log.Printf("Zwischenablage: %v", err)
+		return
+	}
+	a.notify("Link kopiert", "Einfach im Chat einfügen (Strg+V) – wer ihn öffnet, klopft bei dir an.")
 }
 
 // holdMutes hält die Stummschaltung der Tonquellen aktuell, solange die
@@ -225,26 +332,70 @@ func (a *App) Stop() {
 	}
 }
 
+// session liefert die laufende Sitzung oder einen Fehler.
+func (a *App) session() (*stream.Session, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.sess == nil {
+		return nil, errors.New("kein Stream aktiv")
+	}
+	return a.sess, nil
+}
+
 // Allow lässt eine wartende Zuschaueranfrage durch.
 func (a *App) Allow(id uint64) error {
-	a.mu.Lock()
-	sess := a.sess
-	a.mu.Unlock()
-	if sess == nil {
-		return errors.New("kein Stream aktiv")
+	sess, err := a.session()
+	if err != nil {
+		return err
 	}
 	return sess.Allow(id)
 }
 
 // Deny lehnt eine Zuschaueranfrage ab.
 func (a *App) Deny(id uint64) error {
-	a.mu.Lock()
-	sess := a.sess
-	a.mu.Unlock()
-	if sess == nil {
-		return errors.New("kein Stream aktiv")
+	sess, err := a.session()
+	if err != nil {
+		return err
 	}
 	return sess.Deny(id)
+}
+
+// SetPaused hält den laufenden Stream an oder lässt ihn weiterlaufen.
+func (a *App) SetPaused(on bool) error {
+	sess, err := a.session()
+	if err != nil {
+		return err
+	}
+	sess.SetPaused(on)
+	return nil
+}
+
+// TogglePause ist der Tray-Knopf für die Pause.
+func (a *App) TogglePause() {
+	if sess, err := a.session(); err == nil {
+		sess.SetPaused(!sess.Paused())
+	}
+}
+
+// SetTarget wechselt die Quelle. Läuft ein Stream, passiert das ohne
+// Unterbrechung für die Zuschauer.
+func (a *App) SetTarget(target capture.Target) error {
+	target = resolveTarget(target)
+	a.mu.Lock()
+	cfg := a.cfg
+	cfg.Target = target
+	if err := cfg.Validate(); err != nil {
+		a.mu.Unlock()
+		return err
+	}
+	a.cfg = cfg
+	sess := a.sess
+	a.mu.Unlock()
+	cfg.Save()
+	if sess != nil {
+		sess.SetTarget(target)
+	}
+	return nil
 }
 
 func (a *App) Streaming() bool {
@@ -263,8 +414,8 @@ func (a *App) onSessionStatus(st stream.Status) {
 	}
 }
 
-// Serve startet das lokale Bedienpanel auf 127.0.0.1 und, wenn gewünscht,
-// den eingebauten Relay.
+// Serve startet das lokale Bedienpanel auf 127.0.0.1 und je nach Modus
+// Relay und Tunnel – damit der Link schon steht, bevor man auf Start drückt.
 func (a *App) Serve() error {
 	ln, port, err := listenLocal()
 	if err != nil {
@@ -272,7 +423,6 @@ func (a *App) Serve() error {
 	}
 	a.mu.Lock()
 	a.port = port
-	runRelay := a.cfg.RunRelay
 	a.mu.Unlock()
 	srv := &http.Server{Handler: a.Handler()}
 	go func() {
@@ -281,11 +431,7 @@ func (a *App) Serve() error {
 		}
 	}()
 	a.log.Printf("Bedienpanel läuft auf %s", a.PanelURL())
-	if runRelay {
-		if err := a.StartRelay(); err != nil {
-			a.log.Printf("Eingebauter Relay: %v", err)
-		}
-	}
+	a.applyReach()
 	return nil
 }
 
@@ -314,7 +460,7 @@ func (a *App) StartRelay() error {
 	if err != nil {
 		return err
 	}
-	relay := server.New(server.Config{MaxViewers: 8, Log: a.log})
+	relay := server.New(server.Config{MaxViewers: 16, Log: a.log})
 	srv := &http.Server{Handler: relay.Handler(web.FS()), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -325,12 +471,6 @@ func (a *App) StartRelay() error {
 	a.mu.Lock()
 	a.relaySrv = srv
 	a.relayPort = port
-	// Die eigene Server-Adresse auf den Relay zeigen lassen, damit der
-	// Stream sofort läuft – aber nur, wenn bisher nichts Eigenes drinsteht.
-	if isLocalServer(a.cfg.Server) {
-		a.cfg.Server = fmt.Sprintf("http://127.0.0.1:%d", port)
-		a.cfg.Save()
-	}
 	a.mu.Unlock()
 
 	a.log.Printf("Relay läuft auf http://%s:%d (im WLAN erreichbar)", localIP(), port)
@@ -360,9 +500,11 @@ func listenRelay() (net.Listener, int, error) {
 	return nil, 0, errors.New("kein freier Port für den Relay (8080–8090 belegt)")
 }
 
-// StartTunnel macht den Relay über cloudflared im Internet erreichbar.
+// StartTunnel macht den Relay über cloudflared im Internet erreichbar und
+// baut ihn neu auf, falls er wegbricht.
 func (a *App) StartTunnel() {
 	a.mu.Lock()
+	a.tunnelWant = true
 	if a.tunnel != nil || a.tunnelBusy {
 		a.mu.Unlock()
 		return
@@ -372,27 +514,57 @@ func (a *App) StartTunnel() {
 	a.tunnelErr = ""
 	a.mu.Unlock()
 
-	if port == 0 {
-		a.mu.Lock()
-		a.tunnelBusy = false
-		a.tunnelErr = "der eingebaute Relay läuft nicht"
-		a.mu.Unlock()
-		return
-	}
-
 	go func() {
-		tn, err := tunnel.Start(port, a.log)
-		a.mu.Lock()
-		a.tunnelBusy = false
-		if err != nil {
-			a.tunnelErr = err.Error()
+		backoff := 3 * time.Second
+		for {
+			tn, err := tunnel.Start(port, a.log)
+			a.mu.Lock()
+			if !a.tunnelWant {
+				a.tunnelBusy = false
+				a.mu.Unlock()
+				if tn != nil {
+					tn.Stop()
+				}
+				return
+			}
+			if err != nil {
+				a.tunnelErr = err.Error()
+				a.mu.Unlock()
+				a.log.Printf("Tunnel: %v – neuer Versuch in %s", err, backoff)
+				time.Sleep(backoff)
+				if backoff < time.Minute {
+					backoff *= 2
+				}
+				continue
+			}
+			backoff = 3 * time.Second
+			changed := a.tunnelURL != "" && a.tunnelURL != tn.URL
+			a.tunnel = tn
+			a.tunnelURL = tn.URL
+			a.tunnelErr = ""
+			a.tunnelBusy = false
+			streaming := a.sess != nil
+			if changed && streaming {
+				a.copyPending = true
+			}
 			a.mu.Unlock()
-			a.log.Printf("Tunnel: %v", err)
-			return
+			if changed && streaming {
+				a.notify("Neuer Link", "Die Internet-Verbindung wurde neu aufgebaut. Der neue Link ist in der Zwischenablage.")
+			}
+			a.copyLinkIfReady()
+
+			<-tn.Done()
+			a.mu.Lock()
+			if !a.tunnelWant || a.tunnel != tn {
+				a.mu.Unlock()
+				return
+			}
+			a.tunnel = nil
+			a.tunnelBusy = true
+			a.mu.Unlock()
+			a.log.Println("Tunnel weggebrochen, baue neu auf")
+			time.Sleep(time.Second)
 		}
-		a.tunnel = tn
-		a.tunnelURL = tn.URL
-		a.mu.Unlock()
 	}()
 }
 
@@ -401,6 +573,7 @@ func (a *App) StopTunnel() {
 	a.mu.Lock()
 	tn := a.tunnel
 	a.tunnel = nil
+	a.tunnelWant = false
 	a.tunnelURL = ""
 	a.tunnelErr = ""
 	a.mu.Unlock()
@@ -423,42 +596,42 @@ func (a *App) panelURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d/", a.port)
 }
 
-// ShareURL ist der Link, den man Freunden schickt. Er nimmt zuerst den
-// Tunnel, dann die öffentliche Adresse und sonst die LAN-Adresse des
-// eingebauten Relays – damit der Link ohne Konfiguration funktioniert.
+// ShareURL ist der Link, den man Freunden schickt.
 func (a *App) ShareURL() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.shareURLLocked()
+	link, _, _, _ := a.linkLocked()
+	return link
 }
 
-func (a *App) shareURLLocked() string {
-	base := a.tunnelURL
-	if base == "" {
-		base = a.cfg.PublicURL
-	}
-	if base == "" {
-		if isLocalServer(a.cfg.Server) && a.relayPort > 0 {
+// linkLocked baut den Link je nach Modus und sagt, ob er schon benutzbar ist.
+func (a *App) linkLocked() (link string, ready bool, note, linkErr string) {
+	var base string
+	switch a.cfg.Reach {
+	case config.ReachServer:
+		base = a.cfg.Server
+		note = "Über deinen eigenen Server"
+	case config.ReachLAN:
+		if a.relayPort > 0 {
 			base = fmt.Sprintf("http://%s:%d", localIP(), a.relayPort)
-		} else {
-			base = a.cfg.Server
+		}
+		note = "Nur im selben Netzwerk (WLAN/LAN) erreichbar"
+	default:
+		base = a.tunnelURL
+		switch {
+		case base != "":
+			note = "Funktioniert überall – der Link gilt, solange die App läuft"
+		case a.tunnelErr != "":
+			linkErr = a.tunnelErr
+			note = "Internet-Verbindung klappt gerade nicht, neuer Versuch läuft…"
+		default:
+			note = "Link wird vorbereitet… (beim ersten Start einmalig ca. 40 MB)"
 		}
 	}
-	return strings.TrimRight(base, "/") + "/?room=" + a.cfg.Room
-}
-
-// isLocalServer erkennt Adressen, die auf diesen Rechner zeigen.
-func isLocalServer(server string) bool {
-	s := strings.ToLower(strings.TrimSpace(server))
-	if s == "" {
-		return true
+	if base == "" {
+		return "", false, note, linkErr
 	}
-	s = strings.TrimPrefix(strings.TrimPrefix(s, "http://"), "https://")
-	host := s
-	if i := strings.IndexAny(host, ":/"); i >= 0 {
-		host = host[:i]
-	}
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
+	return strings.TrimRight(base, "/") + "/?room=" + a.cfg.Room, true, note, linkErr
 }
 
 // localIP liefert die LAN-Adresse dieses Rechners.
@@ -486,7 +659,34 @@ func (a *App) OpenPanel() {
 }
 
 func (a *App) OpenViewer() {
-	openURL(a.ShareURL())
+	// self=1: Der Viewer bleibt stumm, sonst koppelt der eigene Ton auf.
+	if url := a.ShareURL(); url != "" {
+		openURL(url + "&self=1")
+	}
+}
+
+// CopyLink legt den Link in die Zwischenablage (Tray-Menü).
+func (a *App) CopyLink() {
+	link := a.ShareURL()
+	if link == "" {
+		a.notify("Noch kein Link", "Die Verbindung wird gerade aufgebaut – gleich noch mal versuchen.")
+		return
+	}
+	if err := copyToClipboard(link); err != nil {
+		a.notify("Kopieren fehlgeschlagen", err.Error())
+		return
+	}
+	a.notify("Link kopiert", link)
+}
+
+// Quit beendet die App (z. B. wenn eine neue Version sich installiert).
+func (a *App) Quit() {
+	a.mu.Lock()
+	fn := a.onQuit
+	a.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // OpenBrowserURL öffnet eine Adresse im Standardbrowser.

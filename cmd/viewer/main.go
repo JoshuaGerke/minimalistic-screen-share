@@ -73,7 +73,7 @@ func main() {
 	var peak atomic.Int64
 	var sizeW, sizeH atomic.Int64
 	var mu sync.Mutex
-	var lastFrame []byte
+	var lastFrame, assembling []byte
 
 	go func() {
 		for {
@@ -114,6 +114,22 @@ func main() {
 				continue
 			}
 			switch typ {
+			case proto.MsgFrameChunk:
+				idx, count, _ := proto.ChunkIndex(data)
+				if idx == 0 {
+					assembling = assembling[:0]
+				}
+				assembling = append(assembling, data[proto.ChunkHeaderLen:]...)
+				if idx == count-1 {
+					frames.Add(1)
+					sizeW.Store(int64(w))
+					sizeH.Store(int64(h))
+					if *save != "" {
+						mu.Lock()
+						lastFrame = append(lastFrame[:0], assembling...)
+						mu.Unlock()
+					}
+				}
 			case proto.MsgFrame:
 				frames.Add(1)
 				sizeW.Store(int64(w))

@@ -25,10 +25,14 @@ var urlPattern = regexp.MustCompile(`https://[a-z0-9-]+\.trycloudflare\.com`)
 
 // Tunnel ist ein laufender cloudflared-Prozess mit öffentlicher Adresse.
 type Tunnel struct {
-	URL string
-	cmd *exec.Cmd
-	mu  sync.Mutex
+	URL  string
+	cmd  *exec.Cmd
+	mu   sync.Mutex
+	done chan struct{}
 }
+
+// Done ist geschlossen, sobald cloudflared nicht mehr läuft.
+func (t *Tunnel) Done() <-chan struct{} { return t.done }
 
 // Start lädt cloudflared bei Bedarf herunter und veröffentlicht den
 // lokalen Port. Die zurückgegebene Adresse zeigt auf diesen Rechner.
@@ -74,7 +78,12 @@ func Start(port int, logg *log.Logger) (*Tunnel, error) {
 	select {
 	case url := <-urlCh:
 		logg.Printf("Tunnel steht bereit: %s", url)
-		return &Tunnel{URL: url, cmd: cmd}, nil
+		t := &Tunnel{URL: url, cmd: cmd, done: make(chan struct{})}
+		go func() {
+			cmd.Wait()
+			close(t.done)
+		}()
+		return t, nil
 	case tail := <-errCh:
 		cmd.Process.Kill()
 		return nil, fmt.Errorf("cloudflared beendet sich: %s", shortTail(tail))

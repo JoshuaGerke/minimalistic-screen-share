@@ -297,3 +297,46 @@ func TestJoinErrors(t *testing.T) {
 		t.Fatalf("erwarte 'nicht gefunden', bekam %q", ctl.Msg)
 	}
 }
+
+// TestLateViewerGetsMeta: Der Host schickt meta (mit Tonrate) direkt nach dem
+// Verbinden, Zuschauer kommen aber später. Ohne Nachreichen spielte der Viewer
+// den Ton mit falscher Rate ab – Knacken und Aussetzer.
+func TestLateViewerGetsMeta(t *testing.T) {
+	ts := newTestServer(t, time.Second, 8)
+
+	host := dial(t, ts, "meta-raum", "host")
+	host.waitControl("joined")
+	host.send(proto.Control{T: "meta", Rate: 44100, Audio: true})
+	host.send(proto.Control{T: "pause", On: true})
+	host.sync()
+
+	viewer := dial(t, ts, "meta-raum", "viewer")
+	viewer.waitControl("joined")
+	knock := host.waitControl("knock")
+	host.send(proto.Control{T: "allow", ID: knock.ID})
+	viewer.waitControl("allowed")
+	if ctl := viewer.waitControl("meta"); ctl.Rate != 44100 || !ctl.Audio {
+		t.Fatalf("Meta nicht nachgereicht: %+v", ctl)
+	}
+}
+
+// TestApprovalSurvivesRestart: Wer freigegeben war, kommt nach einem
+// Neustart des Streams ohne neues Anklopfen wieder rein (Co-Working).
+func TestApprovalSurvivesRestart(t *testing.T) {
+	ts := newTestServer(t, time.Second, 8)
+
+	host := dial(t, ts, "neustart", "host")
+	host.waitControl("joined")
+	viewer := dialToken(t, ts, "neustart", "viewer", "tok-1")
+	viewer.waitControl("joined")
+	host.send(proto.Control{T: "allow", ID: host.waitControl("knock").ID})
+	viewer.waitControl("allowed")
+
+	host.send(proto.Control{T: "bye"})
+	viewer.waitControl("ended")
+
+	host2 := dial(t, ts, "neustart", "host")
+	host2.waitControl("joined")
+	again := dialToken(t, ts, "neustart", "viewer", "tok-1")
+	again.waitControl("allowed")
+}

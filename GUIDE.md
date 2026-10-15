@@ -1,103 +1,78 @@
-# In fünf Minuten loslegen
+# In zwei Minuten loslegen
 
-Diese Anleitung deckt genau einen Fall ab: **zwei Leute, zwei Rechner** – einer Windows, einer Arch/Omarchy. Beide können streamen und zuschauen.
+## 1. Installieren
 
-## 1. Einmal installieren
+**Windows:** [`MinimalisticScreenShare.exe`](https://github.com/JoshuaGerke/minimalistic-screen-share/releases/latest/download/MinimalisticScreenShare.exe) herunterladen und doppelklicken. Fertig – die App installiert sich selbst (ohne Admin), legt einen Startmenü-Eintrag an und öffnet ihr Fenster. Das Symbol sitzt danach im Infobereich (Windows 11: hinter dem Pfeil `^`).
 
-**Du (Windows)** – PowerShell aufmachen:
+> Windows zeigt beim ersten Start evtl. „Der Computer wurde durch Windows geschützt“ – auf **Weitere Informationen → Trotzdem ausführen** klicken. Das kommt bei jeder Software ohne kostenpflichtiges Signatur-Zertifikat.
 
-```powershell
-irm https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.ps1 | iex
-```
-
-Danach sitzt das Symbol im Infobereich (bei Windows 11 hinter dem kleinen Pfeil `^`).
-
-**Dein Kumpel (Omarchy/Arch)** – Terminal:
+**Arch/Omarchy:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.sh | bash
-sudo pacman -S grim slurp libpulse    # falls noch nicht da (Aufnahme + Ton + Bereichsauswahl)
-mss-share --settings                  # startet und öffnet das Panel
+sudo pacman -S grim slurp libpulse wl-clipboard   # Aufnahme, Ton, Link kopieren
+mss-share --settings
 ```
 
-## 2. Verbindung herstellen (einmal pro Sitzung)
+**Update:** Neue exe herunterladen und doppelklicken – die alte Version wird beendet, ersetzt und neu gestartet.
 
-Der Relay läuft schon im Client mit – es fehlt nur ein Weg ins Internet. **Einer von euch beiden ist der Treffpunkt**, am besten der, dessen PC sowieso an bleibt:
+## 2. Teilen
 
-1. Panel öffnen: Windows → Rechtsklick aufs Symbol → **Einstellungen…** · Omarchy → `mss-share --settings`
-2. Häkchen bei **„Im Internet erreichbar machen (Tunnel)“**
-3. Kurz warten – beim ersten Mal lädt er ~40 MB. Dann steht darunter: „Öffentlich erreichbar unter `https://…trycloudflare.com`“
-4. Diese Adresse kopieren und dem anderen schicken
+1. Im Fenster auswählen, was du teilen willst (Bildschirm, Monitor, Fenster) – oder Rechtsklick aufs Symbol → **Bildschirm teilen**
+2. **Teilen starten** – der Link ist jetzt in deiner Zwischenablage
+3. Im Chat einfügen (Strg+V) und abschicken
 
-**Der andere** trägt sie einmal im eigenen Panel bei **Server** ein und speichert. Fertig – die Adresse bleibt, solange der Tunnel läuft.
+Wer den Link öffnet, tippt seinen Namen ein und klopft an. Du bekommst eine Meldung und klickst **Reinlassen**. Wer einmal drin war, kommt den ganzen Tag ohne neues Anklopfen wieder rein – auch wenn du zwischendurch aufhörst und neu startest.
 
-> **Im selben WLAN** braucht ihr keinen Tunnel: Im Panel steht dann „Relay läuft auf `http://192.168.…`“ – den Link könnt ihr direkt benutzen, null Konfiguration.
+Im festen Team: **Alle sofort reinlassen** einschalten, dann entfällt das Anklopfen.
 
-## 3. Deinen Bildschirm mit Ton streamen
+## 3. Zuschauen
 
-1. Panel → **Stream starten** (Ziel steht auf Hauptbildschirm) – oder Tray → „Bildschirm streamen“
-2. Im Panel beim Link **Kopieren** drücken und dem Kumpel schicken
-3. Er öffnet den Link im Browser, tippt seinen Namen ein und drückt **Beitreten**
-4. Bei dir kommt eine Meldung → im Panel unter **Anfragen** auf **Annehmen** klicken
+Link öffnen, Namen eingeben, **Zuschauen**. Mehr braucht es nicht – kein Programm, kein Konto, nur der Browser.
 
-Läuft. Beim Zuschauer einmal auf den Lautsprecher-Knopf klicken, sonst bleibt der Browser stumm (Browser blockieren Ton bis zum ersten Klick). Wenn dich niemand nerven soll: Haken bei **„Zuschauer automatisch freigeben“**, dann fällt Schritt 4 weg.
+- **Bild-in-Bild** (Taste `P`): Der Stream schwebt klein über deinen anderen Fenstern – ideal fürs Co-Working
+- **Lautstärke** oben rechts, `M` schaltet stumm, `↑`/`↓` regeln
+- `F` Vollbild, `O` Originalgröße (1:1, für kleinen Text), `I` Verbindungsdaten
+- Hört der andere auf zu teilen, einfach offen lassen: Sobald er wieder startet, bist du automatisch wieder dabei
 
-## 4. Dein Kumpel streamt (gleiches Spiel rückwärts)
+## Für Co-Working
 
-1. Er drückt in seinem Panel **Stream starten** – unter Omarchy/Hyprland nimmt er den Monitor auf, der gerade fokussiert ist
-2. Er kopiert seinen Link (gleiche Adresse wie oben, nur seine Sitzungs-ID) und schickt ihn dir
-3. Du öffnest den Link, tippst deinen Namen ein, er nimmt an – fertig
+- **Pausieren** (im Fenster oder Tray) hält das Bild sofort an, wenn du kurz etwas Privates machst. Die Zuschauer sehen „Pausiert“, die Verbindung bleibt stehen.
+- Die **Quelle wechseln** geht jederzeit während des Teilens – die Zuschauer sehen einfach das neue Bild.
+- Alle Einstellungen gelten sofort, auch mitten im Stream – kein Neustart nötig.
+- Beide teilen gleichzeitig? Kein Problem: Jeder startet sein eigenes Teilen und schickt seinen Link.
 
-## Ton ausnehmen und fein einstellen
+## Bildeinstellungen
 
-Während eines Streams steht im Panel die Karte **Ton-Quellen**: Dort tauchen alle Programme auf, die gerade Ton spielen. Ein Haken schaltet das Programm **während des Streams bei dir stumm** (praktisch für Discord & Co.) – beim Stoppen wird alles automatisch zurückgestellt.
+Im Fenster unter **Einstellungen → Bild** gibt es vier Voreinstellungen:
 
-**Wenn ein Programm bei dir weiter hörbar sein, aber nicht im Stream auftauchen soll** (z. B. Discord-Benachrichtigungen): Windows-Einstellungen → System → Sound → **Lautstärkemixer** → beim Programm **„Von Aufnahme ausschließen“** wählen. Der Knopf „Lautstärkemixer öffnen“ im Panel bringt dich direkt hin. Die Einstellung bleibt gespeichert.
+| Voreinstellung | Wofür |
+|---|---|
+| Sparsam | schwache Leitung, nur „mitgucken“ |
+| Ausgewogen | Standard |
+| Scharf (Text, Code) | Programmieren, Dokumente – kleiner Text bleibt lesbar |
+| Flüssig (Videos) | Videos, Spiele, viel Bewegung |
 
-## Klar und flüssig: realistische Einstellungen
+Der Upload ist der Flaschenhals. Wird es eng, lässt die App Bilder weg, **nie den Ton**.
 
-- **Im WLAN**: 1920er Breite, 24–30 fps, Qualität „Hoch“ – hier geht es über die volle Leitung und sieht top aus.
-- **Über den Tunnel** (trycloudflare): 1280–1600 Breite, 10–15 fps, Qualität „Mittel“. Der Tunnel ist der Flaschenhals, nicht euer Internet – echte 1080p bei 30 fps bräuchten dort stabil 20+ Mbit/s. Der Client bremst sich bei Engpässen inzwischen selbst runter und lässt dabei **Video fallen, nie Ton**.
-- **Ein Monitor statt zweier**: Im Panel unter Ziel **Monitor** den gewünschten auswählen – „Hauptbildschirm“ nimmt unter Hyprland den fokussierten. „Alle Monitore“ nimmt den kompletten Desktop auf, das ist deutlich langsamer (und über einen Tunnel nie flüssig).
+## Ton
 
-## Updates
-
-Einfach denselben Installer noch mal laufen lassen – läuft die App dabei, wird sie beendet, aktualisiert und **automatisch neu gestartet**:
-
-```powershell
-irm https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.ps1 | iex
-```
-
-bzw.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.sh | bash
-```
+- **Systemton mitschicken** schickt alles mit, was du hörst.
+- Programme, die nicht im Stream landen sollen (Discord & Co.), lassen sich während des Teilens im Fenster stummschalten – beim Beenden wird alles zurückgestellt.
+- Soll ein Programm für dich hörbar bleiben, aber nicht im Stream landen: Windows-Lautstärkemixer → beim Programm **„Von Aufnahme ausschließen“** (Knopf „Lautstärkemixer öffnen“ im Fenster).
+- Schaust du **auf demselben PC** zu, der gerade streamt, bleibt der Viewer automatisch stumm – sonst würde der Ton sich selbst wieder aufnehmen und extrem laut rückkoppeln.
 
 ## Wenn was klemmt
 
 | Problem | Lösung |
 |---|---|
-| „Warte auf Freigabe…“ hängt | Der Streamer muss im Panel unter **Anfragen** auf **Annehmen** klicken |
-| Kein Ton | Im Viewer erscheint unten ein **gelber Hinweis** – einmal irgendwo auf die Seite klicken, dann läuft der Ton (Browser-Regel). Beim Streamer muss „Systemton streamen“ angehakt sein |
-| Ton knistert oder rauscht | Seite im Browser neu laden (F5) – seit v0.4.0 nimmt der Viewer die Tonrate des Geräts selbst, das behebt Knistern auf PipeWire-Systemen |
-| „Ton –“ in der Statuszeile | Der Streamer sendet gar keinen Ton. Auf Linux fehlt dann meist parec: `sudo pacman -S libpulse` |
-| Zwei Bildschirme im Stream | Im Panel unter Ziel **Monitor** den einzelnen auswählen (nicht „Alle Monitore“) |
-| „Stream nicht gefunden“ | Der andere hat noch nicht auf **Stream starten** gedrückt (die Sitzungs-ID allein reicht nicht) |
-| Omarchy meldet „grim fehlt“ | `sudo pacman -S grim` |
-| Bild ruckelig oder viel Traffic | Im Panel „Bilder pro Sekunde“ auf 10 und „Maximale Breite“ auf 1280 |
-| Tunnel-Adresse ändert sich | Sie bleibt, solange der Tunnel läuft. Nach einem Neustart einfach die neue Adresse einmal neu eintragen |
-| Update gemacht, App läuft noch alt | Einfach den Installer noch mal laufen lassen – er beendet die App, aktualisiert und startet sie neu |
+| „Warte auf Freigabe…“ hängt | Der Streamer muss **Reinlassen** klicken (Meldung am Symbol oder im Fenster) |
+| „Gerade wird nichts geteilt“ | Der andere hat noch nicht auf **Teilen starten** gedrückt – offen lassen, es geht von selbst los |
+| Kein Ton | Unten erscheint ein gelber Knopf „Ton ist aus“ – einmal draufklicken |
+| Link funktioniert nicht mehr | Der Link gilt, solange die App beim Streamer läuft. Nach einem Neustart der App gibt es einen neuen Link |
+| Bild ruckelt | Voreinstellung **Sparsam** oder **Ausgewogen** nehmen |
+| Omarchy: „grim fehlt“ | `sudo pacman -S grim` |
 
-## Firewall
+## Wie kommt der Link ins Internet?
 
-Ihr braucht **keine eingehenden Ports** – beide Seiten bauen nur Verbindungen nach außen auf (zum Relay bzw. Tunnel). Das gilt auch für Omarchy/Arch mit ufw oder nftables: Standard-Regeln blocken eingehend, ausgehend ist alles frei. Der Ton läuft über dieselbe Verbindung, dafür ist nie ein Port nötig.
-
-Zwei Ausnahmen, beide betreffen nur den **Direktbetrieb im WLAN ohne Tunnel**:
-
-- **Windows**: Beim ersten Start fragt die Firewall, ob `mss-share` ins Netzwerk darf → **Erlauben**. Wurde die Meldung weggeklickt: Windows-Sicherheit → Firewall und Netzwerkschutz → „Eine App durch die Firewall lassen“ → bei `mss-share` beide Haken setzen.
-- **Linux mit aktiver Firewall**: Dort muss Port **8080 eingehend** offen sein, wenn Freunde direkt (ohne Tunnel) auf den eingebauten Relay zugreifen sollen – z. B. `sudo ufw allow 8080/tcp`.
-
-## Was macht der Tunnel?
-
-Er lädt einmalig [cloudflared](https://github.com/cloudflare/cloudflared) von Cloudflare und lässt es den lokalen Relay unter einer zufälligen `trycloudflare.com`-Adresse veröffentlichen – ohne Konto, ohne Portfreigabe am Router. Der Tunnel läuft nur, solange der Haken gesetzt ist. Wenn dir fremde Infrastruktur nicht passt: eigener Relay auf einem VPS oder LAN-only, beides steht im [README](README.md#relay-aufsetzen).
+Die App bringt ihren eigenen kleinen Server mit und stellt ihn über einen kostenlosen [Cloudflare-Tunnel](https://github.com/cloudflare/cloudflared) ins Netz – ohne Konto, ohne Router-Einstellungen, ohne offene Ports. Beim ersten Start lädt sie dafür einmalig ca. 40 MB. Wer das nicht möchte: **Einstellungen → Verbindung → Nur im selben Netzwerk** oder einen eigenen Server eintragen (siehe [README](README.md#eigener-server)).

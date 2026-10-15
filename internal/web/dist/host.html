@@ -10,164 +10,178 @@
 <body class="host">
 
 <div class="host-wrap">
-  <div class="host-head">
+  <header class="host-head">
     <div class="logo small">
-      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+      <svg viewBox="0 0 32 32" width="21" height="21" aria-hidden="true">
         <rect x="4" y="6" width="24" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
         <path d="M12.5 10.5l8 3.5-8 3.5z" fill="currentColor"/>
-        <path d="M12 26h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <path d="M16 22v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M12 26h8M16 22v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg>
     </div>
     <h1>minimalistic screen share</h1>
     <span id="version" class="ver"></span>
     <span class="spacer"></span>
     <span id="status-pill" class="status-pill"><span class="dot"></span><span id="status-label">Bereit</span></span>
-  </div>
+  </header>
 
-  <div class="grid">
-    <div class="card">
-      <h2>Stream</h2>
-      <div class="field">
-        <span>Aufnehmen</span>
-        <div class="target-list">
-          <label class="check"><input type="radio" name="target" value="primary" checked> Hauptbildschirm</label>
-          <label class="check"><input type="radio" name="target" value="window"> Fenster</label>
-          <label class="check"><input type="radio" name="target" value="monitor"> Monitor</label>
-          <label class="check"><input type="radio" name="target" value="screen"> Alle Monitore</label>
-          <label class="check"><input type="radio" name="target" value="test"> Testbild</label>
-        </div>
-      </div>
-      <div class="field hidden" id="window-field">
-        <span>Fenster wählen</span>
-        <div class="row">
-          <select id="window-select"></select>
-          <button class="btn fixed" id="window-refresh" type="button">Neu laden</button>
-        </div>
-      </div>
-      <div class="field hidden" id="monitor-field">
-        <span>Monitor wählen</span>
-        <select id="monitor-select"></select>
-      </div>
-
-      <div class="actions">
-        <button class="btn primary" id="btn-start" type="button">Stream starten</button>
-        <button class="btn" id="btn-stop" type="button">Stoppen</button>
-      </div>
-      <p class="hint" id="start-error"></p>
-
-      <div class="kv" id="stats">
-        <span>Zuschauer</span><b id="stat-viewers">–</b>
-        <span>Auflösung</span><b id="stat-res">–</b>
-        <span>Bilder/s</span><b id="stat-fps">–</b>
-        <span>Datenrate</span><b id="stat-rate">–</b>
-        <span>Ping</span><b id="stat-ping">–</b>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Teilen</h2>
-      <p class="muted small">Schick den Link oder die Sitzungs-ID an alle, die zuschauen sollen. Jeder Zuschauer muss einmal von dir freigegeben werden.</p>
-      <div class="share-link">
-        <input id="share-url" readonly>
-        <button class="btn fixed" id="btn-copy" type="button">Kopieren</button>
-      </div>
-      <div class="actions">
-        <button class="btn" id="btn-open-viewer" type="button">Im Browser ansehen</button>
-      </div>
-      <p class="hint" id="copy-hint"></p>
-
-      <div class="field" style="margin-top:18px">
-        <label class="check"><input type="checkbox" id="btn-tunnel"> Im Internet erreichbar machen (Tunnel)</label>
-        <p class="hint" id="tunnel-hint"></p>
-      </div>
-      <div class="field">
-        <span>Öffentliche Adresse (optional, falls du eine eigene hast)</span>
-        <input id="cfg-publicurl" placeholder="https://share.example.com">
-      </div>
-      <p class="hint" id="relay-hint"></p>
-    </div>
-  </div>
-
-  <div class="card hidden" id="requests-card">
-    <h2>Anfragen</h2>
+  <!-- Anfragen ganz oben, damit man sie nicht übersieht -->
+  <section class="card requests hidden" id="requests-card" aria-live="polite">
+    <h2>Möchte zuschauen</h2>
     <div id="requests"></div>
-  </div>
+  </section>
 
-  <div class="card hidden" id="audio-sources-card">
-    <h2>Ton-Quellen</h2>
-    <p class="muted small">Programme, die gerade Ton spielen. Ein Haken schaltet das Programm <b>während des Streams bei dir stumm</b> – praktisch für Discord &amp; Co. Beim Stoppen wird alles zurückgestellt.</p>
-    <p class="muted small">Soll ein Programm <b>bei dir hörbar bleiben, aber nicht im Stream</b> sein: im Windows-Lautstärkemixer beim Programm <b>„Von Aufnahme ausschließen“</b> wählen.</p>
-    <div class="actions" style="margin-bottom:12px">
-      <button class="btn" id="btn-mixer" type="button">Lautstärkemixer öffnen</button>
+  <section class="card hero">
+    <h2>Was willst du teilen?</h2>
+    <div class="sources" role="radiogroup">
+      <button class="source" data-kind="primary" type="button" role="radio">
+        <svg viewBox="0 0 24 24" width="26" height="26"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 20h6M12 16.5V20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        Bildschirm
+      </button>
+      <button class="source" data-kind="monitor" type="button" role="radio">
+        <svg viewBox="0 0 24 24" width="26" height="26"><rect x="2" y="5" width="11" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="14" y="7" width="8" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5 17h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        Monitor
+      </button>
+      <button class="source" data-kind="window" type="button" role="radio">
+        <svg viewBox="0 0 24 24" width="26" height="26"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 8.5h18" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="6.3" r=".9" fill="currentColor"/><circle cx="8.8" cy="6.3" r=".9" fill="currentColor"/></svg>
+        Fenster
+      </button>
+      <button class="source" data-kind="screen" type="button" role="radio">
+        <svg viewBox="0 0 24 24" width="26" height="26"><rect x="1.5" y="6" width="10" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="12.5" y="6" width="10" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.5 18h11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        Alle Monitore
+      </button>
     </div>
-    <div id="audio-sources"></div>
-    <p class="hint" id="audio-sources-hint"></p>
-  </div>
 
-  <div class="card">
+    <div class="source-pick hidden" id="monitor-field">
+      <select id="monitor-select" aria-label="Monitor"></select>
+    </div>
+    <div class="source-pick row hidden" id="window-field">
+      <select id="window-select" aria-label="Fenster"></select>
+      <button class="btn ghost fixed" id="window-refresh" type="button" title="Fensterliste neu laden">↻</button>
+    </div>
+
+    <div class="go-row" id="go-row">
+      <button class="btn primary big" id="btn-start" type="button">Teilen starten</button>
+      <span class="dim small" id="go-hint">Der Link landet automatisch in deiner Zwischenablage.</span>
+    </div>
+
+    <div class="live-row hidden" id="live-row">
+      <button class="btn big" id="btn-pause" type="button">Pausieren</button>
+      <button class="btn danger big" id="btn-stop" type="button">Beenden</button>
+      <div class="live-stats" id="live-stats"></div>
+    </div>
+    <p class="error hidden" id="start-error" style="margin-top:12px"></p>
+  </section>
+
+  <section class="card">
+    <h2>Dein Link</h2>
+    <div class="link-box">
+      <span id="share-url" class="url pending">Wird vorbereitet…</span>
+      <button class="btn primary" id="btn-copy" type="button" disabled>Kopieren</button>
+      <button class="btn ghost" id="btn-open-viewer" type="button" title="Eigenen Stream im Browser ansehen" disabled>Ansehen</button>
+    </div>
+    <p class="link-note" id="link-note"></p>
+    <div class="viewers" id="viewers" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card" id="settings">
     <h2>Einstellungen</h2>
-    <div class="grid">
-      <div>
-        <div class="field">
-          <span>Server</span>
-          <input id="cfg-server" placeholder="http://localhost:8080">
-        </div>
-        <div class="field">
-          <span>Sitzungs-ID (1 PC = 1 ID, damit finden dich andere)</span>
-          <div class="row">
-            <input id="cfg-room" placeholder="z. B. joshua-gerke-4f2a" maxlength="32" spellcheck="false">
-            <button class="btn fixed" id="btn-new-room" type="button">Neu</button>
-          </div>
-        </div>
-        <div class="field">
-          <span>Name</span>
-          <input id="cfg-name" placeholder="Dein Name">
-        </div>
+    <div class="settings-grid">
+      <div class="section-title">Bild</div>
+      <div class="presets" id="presets">
+        <button class="preset" type="button" data-fps="10" data-q="55" data-w="1280">Sparsam</button>
+        <button class="preset" type="button" data-fps="15" data-q="70" data-w="1600">Ausgewogen</button>
+        <button class="preset" type="button" data-fps="15" data-q="85" data-w="1920">Scharf (Text, Code)</button>
+        <button class="preset" type="button" data-fps="30" data-q="65" data-w="1600">Flüssig (Videos)</button>
       </div>
-      <div>
-        <div class="field">
-          <span>Bilder pro Sekunde</span>
-          <select id="cfg-fps">
-            <option value="5">5 – sparsam</option>
-            <option value="10">10</option>
-            <option value="15">15 – Standard</option>
-            <option value="24">24</option>
-            <option value="30">30 – flüssig</option>
-          </select>
-        </div>
-        <div class="field">
-          <span>Qualität</span>
-          <select id="cfg-quality">
-            <option value="55">Niedrig – wenig Daten</option>
-            <option value="70">Mittel – Standard</option>
-            <option value="85">Hoch – scharf</option>
-          </select>
-        </div>
-        <div class="field">
-          <span>Maximale Breite</span>
-          <select id="cfg-width">
-            <option value="1280">1280 – klein</option>
-            <option value="1600">1600 – Standard</option>
-            <option value="1920">1920 – Full HD</option>
-            <option value="0">Original</option>
-          </select>
-        </div>
-        <div class="field">
-          <label class="check"><input type="checkbox" id="cfg-audio"> Systemton streamen</label>
-          <label class="check"><input type="checkbox" id="cfg-cursor"> Mauszeiger zeigen</label>
-          <label class="check"><input type="checkbox" id="cfg-auto"> Zuschauer automatisch freigeben (ohne Nachfrage)</label>
-          <label class="check"><input type="checkbox" id="cfg-relay"> Relay läuft auf diesem PC mit (empfohlen)</label>
-        </div>
-      </div>
-    </div>
-    <div class="actions">
-      <button class="btn primary" id="btn-save" type="button">Speichern</button>
-    </div>
-    <p class="hint" id="save-hint"></p>
-  </div>
+      <label class="field">
+        <span>Bilder pro Sekunde</span>
+        <select id="cfg-fps">
+          <option value="5">5</option>
+          <option value="10">10</option>
+          <option value="15">15</option>
+          <option value="20">20</option>
+          <option value="24">24</option>
+          <option value="30">30</option>
+          <option value="45">45</option>
+          <option value="60">60 (nur bei kleiner Auflösung)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Auflösung (maximale Breite)</span>
+        <select id="cfg-width">
+          <option value="960">960 px – sehr sparsam</option>
+          <option value="1280">1280 px (720p)</option>
+          <option value="1600">1600 px</option>
+          <option value="1920">1920 px (1080p)</option>
+          <option value="2560">2560 px (1440p)</option>
+          <option value="0">Original</option>
+        </select>
+      </label>
+      <label class="field full">
+        <span>Bildqualität <b id="quality-label">70</b></span>
+        <input id="cfg-quality" type="range" min="30" max="95" step="5">
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="cfg-cursor">
+        <span class="label"><b>Mauszeiger zeigen</b><span>Damit andere sehen, worauf du zeigst</span></span>
+      </label>
+      <div></div>
 
-  <p class="hint" id="platform-hint"></p>
+      <div class="section-title">Ton</div>
+      <label class="switch">
+        <input type="checkbox" id="cfg-audio">
+        <span class="label"><b>Systemton mitschicken</b><span>Alles, was du hörst – Videos, Musik, Spiele</span></span>
+      </label>
+      <div class="field">
+        <button class="btn ghost" id="btn-mixer" type="button">Lautstärkemixer öffnen</button>
+      </div>
+      <div class="field full hidden" id="audio-sources-card">
+        <span>Programme beim Teilen stummschalten (z. B. Discord)</span>
+        <div id="audio-sources"></div>
+        <p class="link-note" id="audio-sources-hint"></p>
+      </div>
+
+      <div class="section-title">Zugang</div>
+      <label class="switch">
+        <input type="checkbox" id="cfg-auto">
+        <span class="label"><b>Alle sofort reinlassen</b><span>Ohne Nachfrage – praktisch im festen Team</span></span>
+      </label>
+      <label class="field">
+        <span>Dein Name (sehen die Zuschauer)</span>
+        <input id="cfg-name" maxlength="32" placeholder="Dein Name">
+      </label>
+      <label class="field full">
+        <span>Sitzungs-ID</span>
+        <div class="row">
+          <input id="cfg-room" maxlength="32" spellcheck="false">
+          <button class="btn ghost fixed" id="btn-new-room" type="button">Neue ID</button>
+        </div>
+      </label>
+
+      <div class="section-title">Verbindung</div>
+      <div class="reach">
+        <label><input type="radio" name="reach" value="internet">
+          <span><b>Überall (empfohlen)</b><span>Der Link funktioniert für jeden, egal wo. Läuft über einen kostenlosen Cloudflare-Tunnel – keine Router-Einstellungen nötig.</span></span></label>
+        <label><input type="radio" name="reach" value="lan">
+          <span><b>Nur im selben Netzwerk</b><span>Für Büro oder WLAN zu Hause. Schneller, nichts geht ins Internet.</span></span></label>
+        <label><input type="radio" name="reach" value="server">
+          <span><b>Eigener Server</b><span>Wenn du mss-relay selbst betreibst, z. B. auf einem VPS.</span></span></label>
+      </div>
+      <label class="field full hidden" id="server-field">
+        <span>Adresse deines Servers</span>
+        <input id="cfg-server" placeholder="https://share.example.com" spellcheck="false">
+      </label>
+
+      <div class="section-title">System</div>
+      <label class="switch">
+        <input type="checkbox" id="cfg-autostart">
+        <span class="label"><b>Beim Anmelden starten</b><span>Sitzt dann still im Infobereich bereit</span></span>
+      </label>
+    </div>
+    <p class="link-note" id="save-hint"></p>
+  </section>
+
+  <p class="foot" id="foot"></p>
 </div>
 
 <script src="/host.js"></script>

@@ -32,6 +32,8 @@ jobs:
           sed -i "s/\$Version *= *\"[^\"]*\"/\$Version    = \"${VERSION}\"/" install.ps1
           cp install.ps1 uninstall.ps1 README.md LICENSE dist/windows/
           (cd dist/windows && zip -qr "../minimalistic-screen-share_${VERSION}_windows_amd64.zip" .)
+          # Die eine Datei für normale Nutzer: herunterladen, doppelklicken, fertig.
+          cp dist/windows/mss-share.exe dist/MinimalisticScreenShare.exe
 
           # Linux (amd64, arm64)
           for ARCH in amd64 arm64; do
@@ -50,6 +52,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            dist/MinimalisticScreenShare.exe \
             dist/minimalistic-screen-share_*_windows_amd64.zip \
             dist/minimalistic-screen-share_*_linux_amd64.tar.gz \
             dist/minimalistic-screen-share_*_linux_arm64.tar.gz \

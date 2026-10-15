@@ -164,17 +164,23 @@ func (s *wasapiSource) Close() error {
 }
 
 // poll holt alle 10 ms neue Pakete aus dem Loopback-Puffer.
+//
+// Spielt nichts, liefert WASAPI-Loopback gar keine Pakete. Dann füllen wir
+// nach der Uhr mit Stille auf: Der Ton bleibt ein durchgehender Strom, und
+// der Viewer erkennt echte Aussetzer im Netz sicher als solche.
 func (s *wasapiSource) poll() {
 	defer close(s.done)
 	defer close(s.chunks)
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
+	lastFed := time.Now()
 	for {
 		select {
 		case <-s.stop:
 			return
 		case <-ticker.C:
 		}
+		got := false
 		for {
 			var packetSize uint32
 			if err := s.acc.GetNextPacketSize(&packetSize); err != nil {
@@ -191,10 +197,18 @@ func (s *wasapiSource) poll() {
 			}
 			if frames > 0 {
 				s.emit(data, frames, flags)
+				got = true
 			}
 			if err := s.acc.ReleaseBuffer(frames); err != nil {
 				return
 			}
+		}
+		now := time.Now()
+		if got {
+			lastFed = now
+		} else if gap := now.Sub(lastFed); gap >= 40*time.Millisecond {
+			s.emit(nil, uint32(gap.Seconds()*float64(s.rate)), wca.AUDCLNT_BUFFERFLAGS_SILENT)
+			lastFed = now
 		}
 	}
 }

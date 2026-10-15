@@ -3,74 +3,90 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>minimalistic screen share</title>
+<title>Zuschauen – minimalistic screen share</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235865f2'/%3E%3Cpath d='M13 10.5l9 5.5-9 5.5z' fill='%23fff'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body class="viewer">
 
 <div id="join" class="overlay">
-  <form id="join-card" class="card join-card">
+  <form id="join-card" class="card join-card" autocomplete="off">
     <div class="logo">
       <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
         <rect x="4" y="6" width="24" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
         <path d="M12.5 10.5l8 3.5-8 3.5z" fill="currentColor"/>
-        <path d="M12 26h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <path d="M16 22v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M12 26h8M16 22v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg>
     </div>
-    <h1>minimalistic screen share</h1>
-    <p class="muted">Sitzungs-ID eingeben und zuschauen. Der Streamer muss dich freigeben.</p>
-    <input id="room-input" placeholder="Sitzungs-ID, z. B. joshua-gerke-4f2a" autocomplete="off" spellcheck="false" maxlength="32" autofocus>
-    <input id="name-input" placeholder="Dein Name (optional)" autocomplete="nickname" maxlength="32">
-    <button class="btn primary wide" type="submit">Beitreten</button>
+    <h1 id="join-title">Bildschirm ansehen</h1>
+    <div id="join-session" class="session hidden"></div>
+    <p id="join-text" class="muted">Gib die Sitzungs-ID oder den Link ein, den du bekommen hast.</p>
+    <input id="room-input" placeholder="Sitzungs-ID oder Link" spellcheck="false" maxlength="300">
+    <input id="name-input" placeholder="Dein Name" autocomplete="nickname" maxlength="32">
+    <button class="btn primary big wide" type="submit">Zuschauen</button>
     <p id="join-error" class="error hidden"></p>
+    <p class="fine">Du teilst dabei nichts von dir – du schaust nur zu.</p>
   </form>
 </div>
 
 <div id="stage" class="hidden">
-  <header class="bar">
-    <div class="left">
-      <span id="status-dot" class="dot"></span>
-      <span id="status-text" class="muted">Verbinde…</span>
-      <span class="spacer"></span>
-      <span class="room-label">Raum</span>
-      <span id="room-name" class="room">–</span>
+  <main id="screen-wrap">
+    <canvas id="screen"></canvas>
+  </main>
+
+  <header class="topbar">
+    <div class="who">
+      <span id="badge" class="badge wait">…</span>
+      <span id="title" class="title">–</span>
+      <span id="sub" class="sub"></span>
     </div>
-    <div class="right">
-      <button id="btn-audio" class="btn icon" title="Ton">
-        <svg class="ico-on" viewBox="0 0 24 24" width="18" height="18"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 010 7M18.8 6.2a8 8 0 010 11.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        <svg class="ico-off hidden" viewBox="0 0 24 24" width="18" height="18"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <div class="controls">
+      <div class="volume" title="Lautstärke (↑/↓, M = stumm)">
+        <button id="btn-mute" class="btn icon" type="button" aria-label="Stumm schalten">
+          <svg class="ico-on" viewBox="0 0 24 24" width="20" height="20"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 010 7M18.8 6.2a8 8 0 010 11.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="ico-off hidden" viewBox="0 0 24 24" width="20" height="20"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <input id="volume" type="range" min="0" max="100" value="100" aria-label="Lautstärke">
+      </div>
+      <button id="btn-fit" class="btn icon" type="button" title="Originalgröße / Einpassen (O)" aria-label="Größe umschalten">
+        <svg viewBox="0 0 24 24" width="19" height="19"><rect x="3.5" y="5.5" width="17" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 12h6M12 9v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       </button>
-      <button id="btn-fullscreen" class="btn icon" title="Vollbild">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <button id="btn-pip" class="btn icon" type="button" title="Bild-in-Bild – schwebt über deinen anderen Fenstern (P)" aria-label="Bild in Bild">
+        <svg viewBox="0 0 24 24" width="19" height="19"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor"/></svg>
       </button>
-      <button id="btn-leave" class="btn icon danger" title="Verlassen">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <button id="btn-stats" class="btn icon" type="button" title="Verbindungsdaten (I)" aria-label="Verbindungsdaten">
+        <svg viewBox="0 0 24 24" width="19" height="19"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 11v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/></svg>
+      </button>
+      <button id="btn-fullscreen" class="btn icon" type="button" title="Vollbild (F)" aria-label="Vollbild">
+        <svg viewBox="0 0 24 24" width="19" height="19"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <button id="btn-leave" class="btn icon danger" type="button" title="Verlassen" aria-label="Verlassen">
+        <svg viewBox="0 0 24 24" width="19" height="19"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </div>
   </header>
 
-  <main id="screen-wrap">
-    <canvas id="screen"></canvas>
-    <div id="overlay-msg" class="center-overlay">
-      <div class="spinner"></div>
-      <p id="overlay-text">Verbinde…</p>
-      <button id="overlay-btn" class="btn primary hidden">Neu verbinden</button>
-    </div>
-    <div id="audio-hint" class="audio-hint hidden">Ton ist aus – einmal irgendwo klicken zum Aktivieren</div>
-  </main>
+  <div id="overlay-msg" class="center-overlay">
+    <div class="spinner"></div>
+    <p id="overlay-text" class="big">Verbinde…</p>
+    <p id="overlay-fine" class="fine"></p>
+    <button id="overlay-btn" class="btn primary hidden" type="button">Neu verbinden</button>
+  </div>
 
-  <footer class="stats">
-    <span id="stat-res">–</span>
-    <span id="stat-fps">–</span>
-    <span id="stat-rate">–</span>
-    <span id="stat-audio">–</span>
-    <span id="stat-ping">–</span>
-    <span id="stat-viewers">–</span>
-  </footer>
+  <button id="audio-hint" class="audio-hint hidden" type="button">Ton ist aus – hier klicken zum Einschalten</button>
+
+  <div id="stats-panel" class="stats-panel hidden">
+    <span>Auflösung</span><b id="stat-res">–</b>
+    <span>Bilder/s</span><b id="stat-fps">–</b>
+    <span>Datenrate</span><b id="stat-rate">–</b>
+    <span>Ping</span><b id="stat-ping">–</b>
+    <span>Ton-Puffer</span><b id="stat-buffer">–</b>
+    <span>Tonpegel</span><b id="stat-audio">–</b>
+    <span>Zuschauer</span><b id="stat-viewers">–</b>
+  </div>
 </div>
 
+<script src="/audio-core.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

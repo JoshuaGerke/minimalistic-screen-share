@@ -14,9 +14,16 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 )
 
+// Erreichbarkeit: Wie Zuschauer zum Stream kommen.
+const (
+	ReachInternet = "internet" // eingebauter Relay + Tunnel, Link funktioniert überall
+	ReachLAN      = "lan"      // eingebauter Relay, nur im selben Netz
+	ReachServer   = "server"   // eigener Relay, z. B. auf einem VPS
+)
+
 type Config struct {
+	Reach      string         `json:"reach"`
 	Server     string         `json:"server"`
-	PublicURL  string         `json:"public_url,omitempty"`
 	Room       string         `json:"room"`
 	Name       string         `json:"name"`
 	FPS        int            `json:"fps"`
@@ -24,7 +31,6 @@ type Config struct {
 	MaxWidth   int            `json:"max_width"`
 	Audio      bool           `json:"audio"`
 	AutoAccept bool           `json:"auto_accept"`
-	RunRelay   bool           `json:"run_relay"`
 	MutedApps  []string       `json:"muted_apps,omitempty"`
 	Target     capture.Target `json:"target"`
 }
@@ -39,14 +45,14 @@ func Default() Config {
 		name = "PC"
 	}
 	return Config{
-		Server:   "http://localhost:8080",
+		Reach:    ReachInternet,
+		Server:   "",
 		Room:     DefaultSessionID(),
 		Name:     name,
 		FPS:      15,
 		Quality:  70,
 		MaxWidth: 1600,
 		Audio:    true,
-		RunRelay: true,
 		Target:   capture.Primary(),
 	}
 }
@@ -141,17 +147,17 @@ func Load() Config {
 	cfg.MaxWidth = loaded.MaxWidth
 	cfg.Audio = loaded.Audio
 	cfg.AutoAccept = loaded.AutoAccept
-	cfg.PublicURL = loaded.PublicURL
 	cfg.MutedApps = loaded.MutedApps
 	if loaded.Target.Kind != "" {
 		cfg.Target = loaded.Target
 	}
-	// Fehlt der Schlüssel (Config aus einer älteren Version), bleibt der
-	// eingebaute Relay angeschaltet.
-	var probe map[string]json.RawMessage
-	if json.Unmarshal(data, &probe) == nil {
-		if _, ok := probe["run_relay"]; ok {
-			cfg.RunRelay = loaded.RunRelay
+	cfg.Reach = loaded.Reach
+	if cfg.Reach == "" {
+		// Config aus einer Version vor den Modi: Zeigte der Server woanders
+		// hin, war das ein eigener Relay – sonst gleich Internet-Modus.
+		cfg.Reach = ReachInternet
+		if !IsLocalServer(cfg.Server) {
+			cfg.Reach = ReachServer
 		}
 	}
 	cfg.normalize()
@@ -170,14 +176,20 @@ func (c Config) Save() error {
 // Validate prüft die wichtigsten Werte, bevor gespeichert oder gestreamt wird.
 func (c *Config) Validate() error {
 	c.normalize()
-	if strings.TrimSpace(c.Server) == "" {
-		return fmt.Errorf("Server-Adresse fehlt")
+	switch c.Reach {
+	case ReachInternet, ReachLAN:
+	case ReachServer:
+		if c.Server == "" || IsLocalServer(c.Server) {
+			return fmt.Errorf("Adresse des eigenen Servers fehlt")
+		}
+	default:
+		return fmt.Errorf("unbekannte Erreichbarkeit: %q", c.Reach)
 	}
 	if !roomPattern.MatchString(c.Room) {
 		return fmt.Errorf("Raumcode muss 2–32 Zeichen haben: a–z, 0–9 und -")
 	}
-	if c.FPS < 1 || c.FPS > 30 {
-		return fmt.Errorf("FPS muss zwischen 1 und 30 liegen")
+	if c.FPS < 1 || c.FPS > 60 {
+		return fmt.Errorf("FPS muss zwischen 1 und 60 liegen")
 	}
 	if c.Quality < 20 || c.Quality > 95 {
 		return fmt.Errorf("Qualität muss zwischen 20 und 95 liegen")
@@ -191,6 +203,20 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unbekanntes Ziel: %q", c.Target.Kind)
 	}
 	return nil
+}
+
+// IsLocalServer erkennt Adressen, die auf diesen Rechner zeigen.
+func IsLocalServer(server string) bool {
+	s := strings.ToLower(strings.TrimSpace(server))
+	if s == "" {
+		return true
+	}
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "http://"), "https://")
+	host := s
+	if i := strings.IndexAny(host, ":/"); i >= 0 {
+		host = host[:i]
+	}
+	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" || host == ""
 }
 
 func (c *Config) normalize() {

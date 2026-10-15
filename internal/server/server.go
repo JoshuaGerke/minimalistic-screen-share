@@ -29,7 +29,7 @@ const (
 	sendQueue      = 128
 	maxPending     = 20
 	hostGrace      = 20 * time.Second
-	viewerTokenTTL = 10 * time.Minute
+	viewerTokenTTL = 12 * time.Hour
 )
 
 var roomPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
@@ -46,6 +46,10 @@ type Server struct {
 	upgrader websocket.Upgrader
 	mu       sync.Mutex
 	rooms    map[string]*room
+	// tokens merkt sich freigegebene Zuschauer pro Sitzungs-ID – auch über
+	// das Ende eines Streams hinaus. Wer heute schon zugeschaut hat, kommt
+	// nach einem Neustart des Streams ohne neue Freigabe wieder rein.
+	tokens map[string]map[string]time.Time
 }
 
 type room struct {
@@ -56,10 +60,13 @@ type room struct {
 	grace      *time.Timer
 	autoAccept bool
 	nextID     uint64
-	// tokens merkt sich kurzzeitig freigegebene Zuschauer, damit ein
-	// Verbindungsabbruch keine neue Freigabe nötig macht.
-	tokens map[string]time.Time
+	// sticky hält die letzte Steuernachricht pro Typ ("meta", "pause"), damit
+	// später freigegebene Zuschauer Tonrate und Zustand ebenfalls kennen.
+	sticky map[string][]byte
 }
+
+// stickyTypes sind Steuernachrichten, die neue Zuschauer nachgereicht bekommen.
+var stickyTypes = map[string]bool{"meta": true, "pause": true}
 
 type client struct {
 	srv   *Server
@@ -93,7 +100,8 @@ func New(cfg Config) *Server {
 			WriteBufferSize: 64 << 10,
 			CheckOrigin:     func(r *http.Request) bool { return true },
 		},
-		rooms: map[string]*room{},
+		rooms:  map[string]*room{},
+		tokens: map[string]map[string]time.Time{},
 	}
 }
 
@@ -234,10 +242,9 @@ func (s *Server) join(c *client, code string) error {
 	// Wer vor kurzem schon einmal freigegeben wurde, darf nach einem
 	// Verbindungsabbruch direkt wieder rein.
 	if c.token != "" {
-		if exp, ok := rm.tokens[c.token]; ok && time.Now().Before(exp) {
-			rm.tokens[c.token] = time.Now().Add(viewerTokenTTL)
-			rm.viewers[c] = struct{}{}
-			c.enqueueControl(proto.Control{T: "allowed"})
+		if exp, ok := s.tokens[code][c.token]; ok && time.Now().Before(exp) {
+			s.tokens[code][c.token] = time.Now().Add(viewerTokenTTL)
+			s.admitLocked(rm, c)
 			s.log.Printf("Raum %q: Zuschauer %s wieder dabei (%d)", code, c.name, len(rm.viewers))
 			s.sendViewersLocked(rm)
 			return nil
@@ -245,8 +252,7 @@ func (s *Server) join(c *client, code string) error {
 	}
 
 	if rm.autoAccept && rm.host != nil {
-		rm.viewers[c] = struct{}{}
-		c.enqueueControl(proto.Control{T: "allowed"})
+		s.admitLocked(rm, c)
 		s.log.Printf("Raum %q: Zuschauer %s dabei (%d)", code, c.name, len(rm.viewers))
 		s.sendViewersLocked(rm)
 		return nil
@@ -368,16 +374,7 @@ func (s *Server) allow(host *client, id uint64, accept bool) {
 	}
 	delete(rm.pending, target)
 	if accept {
-		rm.viewers[target] = struct{}{}
-		// Freigabe kurz merken, damit ein Reconnect nicht wieder klopfen muss.
-		if target.token != "" {
-			if rm.tokens == nil {
-				rm.tokens = map[string]time.Time{}
-			}
-			rm.pruneTokens()
-			rm.tokens[target.token] = time.Now().Add(viewerTokenTTL)
-		}
-		target.enqueueControl(proto.Control{T: "allowed"})
+		s.admitLocked(rm, target)
 		s.log.Printf("Raum %q: %s darf zuschauen (%d)", rm.code, target.name, len(rm.viewers))
 		s.sendViewersLocked(rm)
 	} else {
@@ -391,14 +388,38 @@ func (s *Server) allow(host *client, id uint64, accept bool) {
 	}
 }
 
-// pruneTokens wirft abgelaufene Freigaben weg. Der Aufrufer muss s.mu halten.
-func (rm *room) pruneTokens() {
+// admitLocked nimmt einen Zuschauer in den Raum auf, merkt sich die Freigabe
+// (Reconnect ohne neues Anklopfen) und reicht ihm die gemerkten
+// Steuernachrichten nach. Der Aufrufer muss s.mu halten.
+func (s *Server) admitLocked(rm *room, c *client) {
+	rm.viewers[c] = struct{}{}
+	if c.token != "" {
+		s.rememberLocked(rm.code, c.token)
+	}
+	c.enqueueControl(proto.Control{T: "allowed"})
+	for _, msg := range rm.sticky {
+		c.enqueue(msg, true)
+	}
+}
+
+// rememberLocked merkt sich eine Freigabe und räumt abgelaufene weg. Der
+// Aufrufer muss s.mu halten.
+func (s *Server) rememberLocked(code, token string) {
 	now := time.Now()
-	for t, exp := range rm.tokens {
-		if now.After(exp) {
-			delete(rm.tokens, t)
+	for c, m := range s.tokens {
+		for t, exp := range m {
+			if now.After(exp) {
+				delete(m, t)
+			}
+		}
+		if len(m) == 0 {
+			delete(s.tokens, c)
 		}
 	}
+	if s.tokens[code] == nil {
+		s.tokens[code] = map[string]time.Time{}
+	}
+	s.tokens[code][token] = now.Add(viewerTokenTTL)
 }
 
 // setAutoAccept schaltet die automatische Freigabe um und lässt offene
@@ -422,8 +443,7 @@ func (s *Server) setAutoAccept(host *client, on bool) {
 // s.mu halten.
 func (s *Server) acceptAllLocked(rm *room) {
 	for p := range rm.pending {
-		rm.viewers[p] = struct{}{}
-		p.enqueueControl(proto.Control{T: "allowed"})
+		s.admitLocked(rm, p)
 	}
 	if len(rm.pending) > 0 {
 		s.log.Printf("Raum %q: %d offene Anfragen automatisch durchgelassen", rm.code, len(rm.pending))
@@ -448,11 +468,17 @@ func (s *Server) relayBinary(from *client, msg []byte) {
 }
 
 // relayControl schickt eine Steuernachricht vom Host an alle Zuschauer.
-func (s *Server) relayControl(from *client, msg []byte) {
+func (s *Server) relayControl(from *client, typ string, msg []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if from.room == nil || from.room.host != from {
 		return
+	}
+	if stickyTypes[typ] {
+		if from.room.sticky == nil {
+			from.room.sticky = map[string][]byte{}
+		}
+		from.room.sticky[typ] = msg
 	}
 	for v := range from.room.viewers {
 		v.enqueue(msg, true)
@@ -542,7 +568,7 @@ func (c *client) readLoop() {
 			}
 		default:
 			if c.role == "host" {
-				c.srv.relayControl(c, data)
+				c.srv.relayControl(c, ctl.T, data)
 			}
 		}
 	}

@@ -24,7 +24,11 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/api/stop", a.localOnly(a.handleStop))
 	mux.HandleFunc("/api/allow", a.localOnly(a.handleAllow))
 	mux.HandleFunc("/api/deny", a.localOnly(a.handleDeny))
-	mux.HandleFunc("/api/tunnel", a.localOnly(a.handleTunnel))
+	mux.HandleFunc("/api/pause", a.localOnly(a.handlePause))
+	mux.HandleFunc("/api/target", a.localOnly(a.handleTarget))
+	mux.HandleFunc("/api/autostart", a.localOnly(a.handleAutostart))
+	mux.HandleFunc("/api/quit", a.localOnly(a.handleQuit))
+	mux.HandleFunc("/api/hello", a.handleHello)
 	mux.HandleFunc("/api/audiosessions", a.localOnly(a.handleAudioSessions))
 	mux.HandleFunc("/api/openmixer", a.localOnly(a.handleOpenMixer))
 	mux.Handle("/", hostIndex(web.FS()))
@@ -141,25 +145,90 @@ func (a *App) handleKnockDecision(w http.ResponseWriter, r *http.Request, decide
 	writeJSON(w, http.StatusOK, a.Status())
 }
 
-// handleTunnel schaltet den Internet-Tunnel ein oder aus.
-func (a *App) handleTunnel(w http.ResponseWriter, r *http.Request) {
+// decodeOn liest {"on": bool} aus dem Body.
+func decodeOn(w http.ResponseWriter, r *http.Request) (bool, bool) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
+		return false, false
 	}
 	var body struct {
 		On bool `json:"on"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "ungültige Anfrage: "+err.Error())
+		return false, false
+	}
+	return body.On, true
+}
+
+// handlePause hält den Stream an oder lässt ihn weiterlaufen.
+func (a *App) handlePause(w http.ResponseWriter, r *http.Request) {
+	on, ok := decodeOn(w, r)
+	if !ok {
 		return
 	}
-	if body.On {
-		a.StartTunnel()
-	} else {
-		a.StopTunnel()
+	if err := a.SetPaused(on); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, a.Status())
+}
+
+// handleTarget wechselt die Quelle – im laufenden Stream ohne Unterbrechung.
+func (a *App) handleTarget(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	var target capture.Target
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&target); err != nil {
+		writeError(w, http.StatusBadRequest, "ungültiges Ziel: "+err.Error())
+		return
+	}
+	if err := a.SetTarget(target); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.Status())
+}
+
+// handleAutostart schaltet den Start beim Anmelden um.
+func (a *App) handleAutostart(w http.ResponseWriter, r *http.Request) {
+	on, ok := decodeOn(w, r)
+	if !ok {
+		return
+	}
+	if err := setAutostart(on); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.Status())
+}
+
+// handleHello beantwortet dem Viewer (von jeder Seite aus) nur eine Frage:
+// Streamt dieser PC gerade die Sitzung, die du ansehen willst? Dann muss der
+// Viewer stumm bleiben – sonst nimmt der Systemton den eigenen Stream wieder
+// auf und es koppelt sich ohrenbetäubend laut auf.
+func (a *App) handleHello(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Private-Network", "true")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	room := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("room")))
+	cfg := a.Config()
+	writeJSON(w, http.StatusOK, map[string]bool{"self": a.Streaming() && room != "" && room == cfg.Room})
+}
+
+// handleQuit beendet die App – das nutzt eine neue Version beim Update.
+func (a *App) handleQuit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	go a.Quit()
 }
 
 // handleAudioSessions listet die Tonquellen auf und merkt sich, welche

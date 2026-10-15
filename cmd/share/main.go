@@ -21,6 +21,7 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/app"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/config"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/setup"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/single"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/stream"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/tray"
@@ -35,6 +36,8 @@ const (
 	idPanel         = 5
 	idQuit          = 6
 	idSessionID     = 7
+	idCopy          = 8
+	idPause         = 9
 	idWindowMenu    = 10
 	idWindowBase    = 100
 	windowSlotCount = 20
@@ -68,6 +71,10 @@ func main() {
 		width        = flag.Int("width", -1, "maximale Breite überschreiben (0 = Original)")
 		noAudio      = flag.Bool("no-audio", false, "ohne Ton streamen")
 		debug        = flag.Bool("debug", false, "Logs nur auf der Konsole")
+		uninstall    = flag.Bool("uninstall", false, "App entfernen")
+		welcome      = flag.Bool("welcome", false, "nach der Installation: Panel öffnen")
+		background   = flag.Bool("background", false, "still starten (Autostart), kein Panel")
+		portable     = flag.Bool("portable", false, "nicht installieren, direkt aus diesem Ordner laufen")
 	)
 	flag.Parse()
 
@@ -105,9 +112,26 @@ func main() {
 		return
 	}
 
+	if *uninstall {
+		if err := setup.Uninstall(); err != nil {
+			setup.Message(err.Error())
+		}
+		return
+	}
+	// Doppelklick auf die heruntergeladene exe: erst installieren, dann
+	// startet die installierte Kopie. Klappt das nicht, läuft sie portabel.
+	if !*portable && !*streamNow && setup.Needed() {
+		if err := setup.Install(logger); err == nil {
+			return
+		} else {
+			logger.Printf("Installation: %v – laufe portabel", err)
+		}
+	}
+
 	cfg := config.Load()
 	if *server != "" {
 		cfg.Server = *server
+		cfg.Reach = config.ReachServer
 	}
 	if *room != "" {
 		cfg.Room = *room
@@ -134,7 +158,7 @@ func main() {
 		}
 		return
 	}
-	runTray(logger, cfg, *settings)
+	runTray(logger, cfg, *settings, *welcome, *background)
 }
 
 /* ---------- Logging ---------- */
@@ -255,24 +279,27 @@ func runSnapshot(path string, target capture.Target, quality, maxWidth int) erro
 	return nil
 }
 
-// runHeadless streamt ohne Tray – praktisch zum Testen und für Autostart.
+// runHeadless streamt ohne Tray – praktisch zum Testen. Relay und Tunnel
+// laufen wie im Tray-Betrieb mit, der Link steht im Log.
 func runHeadless(logger *log.Logger, cfg config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	sess := stream.New(stream.Options{
-		Server:   cfg.Server,
-		Room:     cfg.Room,
-		Name:     cfg.Name,
-		FPS:      cfg.FPS,
-		Quality:  cfg.Quality,
-		MaxWidth: cfg.MaxWidth,
-		Audio:    cfg.Audio,
-		Target:   cfg.Target,
-		Log:      logger,
-	})
+	a := app.New(logger, cfg)
+	if err := a.Serve(); err != nil {
+		return err
+	}
+	defer a.StopTunnel()
+	if err := a.Start(cfg.Target); err != nil {
+		return err
+	}
 	last := ""
-	sess.SetOnChange(func(st stream.Status) {
+	lastLink := ""
+	a.SetOnStatus(func(st stream.Status) {
+		if link := a.ShareURL(); link != lastLink && link != "" {
+			lastLink = link
+			logger.Println("Link:", link)
+		}
 		line := statusText(st)
 		if line != last {
 			logger.Println(line)
@@ -281,67 +308,69 @@ func runHeadless(logger *log.Logger, cfg config.Config) error {
 	})
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sig
-		logger.Println("beende Stream")
-		sess.Stop()
-	}()
-	sess.Run()
+	<-sig
+	logger.Println("beende Stream")
+	a.Stop()
 	return nil
 }
 
 /* ---------- Tray-Betrieb ---------- */
 
-func runTray(logger *log.Logger, cfg config.Config, settingsOnly bool) {
+func runTray(logger *log.Logger, cfg config.Config, settingsOnly, welcome, background bool) {
 	firstRun := false
 	if _, err := os.Stat(config.Path()); os.IsNotExist(err) {
 		firstRun = true
 	}
 
-	a := app.New(logger)
-
 	if settingsOnly {
 		if openExistingPanel() {
 			return
 		}
-	} else {
-		first, err := single.Acquire()
-		if err != nil {
-			logger.Printf("Einzelinstanz-Prüfung: %v", err)
-		} else if !first {
-			if !openExistingPanel() {
-				logger.Println("Client läuft schon, Panel war nicht erreichbar")
-			}
-			return
+	}
+	first, err := single.Acquire()
+	if err != nil {
+		logger.Printf("Einzelinstanz-Prüfung: %v", err)
+	} else if !first {
+		if !openExistingPanel() {
+			logger.Println("Client läuft schon, Panel war nicht erreichbar")
 		}
+		return
 	}
 
+	a := app.New(logger, cfg)
 	if err := a.Serve(); err != nil {
 		logger.Fatalf("Bedienpanel: %v", err)
 	}
-	if settingsOnly || firstRun {
+	if !background && (settingsOnly || firstRun || welcome) {
 		a.OpenPanel()
 	}
 
 	items, slots := buildMenu(a)
-	err := tray.Run(items, func(t tray.Tray) {
+	err = tray.Run(items, func(t tray.Tray) {
 		wireTray(a, t, slots)
+		if welcome {
+			t.Notify("Installiert", "Das Symbol sitzt hier im Infobereich. Rechtsklick → Bildschirm teilen.")
+		}
 	})
 	if err != nil {
 		logger.Printf("Kein Tray verfügbar (%v)", err)
 		logger.Printf("Steuerung über %s", a.PanelURL())
-		waitSignal(a)
+		quit := make(chan struct{})
+		var once sync.Once
+		a.SetOnQuit(func() { once.Do(func() { close(quit) }) })
+		if !background && !settingsOnly && !firstRun && !welcome {
+			a.OpenPanel()
+		}
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		select {
+		case <-sig:
+		case <-quit:
+		}
 	}
 	a.Stop()
 	a.StopTunnel()
 	a.StopRelay()
-}
-
-func waitSignal(a *app.App) {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	<-sig
-	a.Stop()
 }
 
 // openExistingPanel sucht eine laufende Instanz und öffnet deren Panel.
@@ -382,6 +411,7 @@ func (s *windowSlots) set(i int, title string) {
 
 func buildMenu(a *app.App) ([]*tray.Item, *windowSlots) {
 	slots := &windowSlots{titles: make([]string, windowSlotCount)}
+	cursor := func() bool { return a.Config().Target.Cursor }
 
 	windowItems := make([]*tray.Item, 0, windowSlotCount+2)
 	for i := 0; i < windowSlotCount; i++ {
@@ -392,7 +422,7 @@ func buildMenu(a *app.App) ([]*tray.Item, *windowSlots) {
 			Disabled: true,
 			OnClick: func() {
 				if title := slots.get(i); title != "" {
-					startTarget(a, capture.Target{Kind: "window", Window: title, Cursor: true})
+					startTarget(a, capture.Target{Kind: "window", Window: title, Cursor: cursor()})
 				}
 			},
 		})
@@ -411,7 +441,7 @@ func buildMenu(a *app.App) ([]*tray.Item, *windowSlots) {
 		ID:    idMonitorAll,
 		Title: "Alle Monitore",
 		OnClick: func() {
-			startTarget(a, capture.Target{Kind: "screen", Cursor: true})
+			startTarget(a, capture.Target{Kind: "screen", Cursor: cursor()})
 		},
 	}}
 	for _, m := range monitors {
@@ -420,24 +450,28 @@ func buildMenu(a *app.App) ([]*tray.Item, *windowSlots) {
 			ID:    idMonitorBase + m.Index,
 			Title: fmt.Sprintf("Monitor %d (%d×%d)", m.Index+1, m.W, m.H),
 			OnClick: func() {
-				startTarget(a, capture.Target{Kind: "monitor", Monitor: m.Index, Cursor: true})
+				startTarget(a, capture.Target{Kind: "monitor", Monitor: m.Index, Cursor: cursor()})
 			},
 		})
 	}
 
 	items := []*tray.Item{
-		{ID: idStartScreen, Title: "Bildschirm streamen", OnClick: func() {
-			startTarget(a, capture.Primary())
+		{ID: idStartScreen, Title: "Bildschirm teilen", OnClick: func() {
+			t := capture.Primary()
+			t.Cursor = cursor()
+			startTarget(a, t)
 		}},
-		{ID: idWindowMenu, Title: "Fenster streamen", Items: windowItems},
-		{ID: idMonitorMenu, Title: "Monitor streamen", Items: monitorItems},
-		{ID: idStop, Title: "Stream stoppen", Disabled: true, OnClick: a.Stop},
+		{ID: idWindowMenu, Title: "Fenster teilen", Items: windowItems},
+		{ID: idMonitorMenu, Title: "Monitor teilen", Items: monitorItems},
+		{ID: idPause, Title: "Pausieren", Disabled: true, OnClick: a.TogglePause},
+		{ID: idStop, Title: "Teilen beenden", Disabled: true, OnClick: a.Stop},
 		{Separator: true},
 		{ID: idStatus, Title: "Status: Bereit", Disabled: true},
-		{ID: idSessionID, Title: "Sitzungs-ID: –", OnClick: a.OpenPanel},
-		{ID: idWatch, Title: "Im Browser ansehen", Disabled: true, OnClick: a.OpenViewer},
+		{ID: idCopy, Title: "Link kopieren", OnClick: a.CopyLink},
+		{ID: idWatch, Title: "Eigenen Stream ansehen", Disabled: true, OnClick: a.OpenViewer},
 		{Separator: true},
-		{ID: idPanel, Title: "Einstellungen…", OnClick: a.OpenPanel},
+		{ID: idPanel, Title: "Öffnen…", OnClick: a.OpenPanel},
+		{ID: idSessionID, Title: "Sitzungs-ID: –", Disabled: true},
 		{ID: idQuit, Title: "Beenden", OnClick: func() {
 			if currentTray != nil {
 				currentTray.Quit()
@@ -450,6 +484,8 @@ func buildMenu(a *app.App) ([]*tray.Item, *windowSlots) {
 func wireTray(a *app.App, t tray.Tray, slots *windowSlots) {
 	currentTray = t
 	t.SetActivate(a.OpenPanel)
+	a.SetOnNotify(t.Notify)
+	a.SetOnQuit(t.Quit)
 	refreshFn = func() { refreshWindows(t, slots) }
 	refreshWindows(t, slots)
 
@@ -465,6 +501,12 @@ func wireTray(a *app.App, t tray.Tray, slots *windowSlots) {
 		live := a.Streaming()
 		t.SetItemEnabled(idStop, live)
 		t.SetItemEnabled(idWatch, live)
+		t.SetItemEnabled(idPause, live)
+		if st.Paused {
+			t.SetItemTitle(idPause, "Fortsetzen")
+		} else {
+			t.SetItemTitle(idPause, "Pausieren")
+		}
 
 		if room := a.Config().Room; room != lastRoom {
 			lastRoom = room
@@ -474,7 +516,7 @@ func wireTray(a *app.App, t tray.Tray, slots *windowSlots) {
 		if n := len(st.Pending); n > 0 {
 			if n > lastPending {
 				name := st.Pending[n-1].Name
-				t.Notify("Anfrage von "+name, name+" möchte zuschauen. Klick öffnet das Panel zum Annehmen oder Ablehnen.")
+				t.Notify("Anfrage von "+name, name+" möchte zuschauen. Klick öffnet das Fenster zum Annehmen oder Ablehnen.")
 			}
 		}
 		lastPending = len(st.Pending)
@@ -508,8 +550,16 @@ func truncate(s string, n int) string {
 	return string(runes[:n-1]) + "…"
 }
 
+// startTarget startet den Stream – oder wechselt nur die Quelle, wenn schon
+// gestreamt wird. Zuschauer merken davon nichts außer dem neuen Bild.
 func startTarget(a *app.App, target capture.Target) {
-	if err := a.Start(target); err != nil {
+	var err error
+	if a.Streaming() {
+		err = a.SetTarget(target)
+	} else {
+		err = a.Start(target)
+	}
+	if err != nil {
 		a.ReportError(err.Error())
 	}
 }
@@ -521,13 +571,16 @@ func describe(st stream.Status) (iconState, text string) {
 		}
 		return "paused", fmt.Sprintf("Status: %d offene Anfragen", n)
 	}
+	if st.Paused && (st.State == "live" || st.State == "paused") {
+		return "paused", "Status: Pausiert – Zuschauer sehen nichts"
+	}
 	switch st.State {
 	case "connecting":
 		return "idle", "Status: Verbinde…"
 	case "live":
 		return "live", fmt.Sprintf("Status: Live – %d Zuschauer", st.Viewers)
 	case "paused":
-		return "paused", "Status: Pausiert – niemand schaut zu"
+		return "paused", "Status: Bereit – wartet auf Zuschauer"
 	case "reconnecting":
 		return "paused", "Status: Neu verbinden…"
 	case "error":
