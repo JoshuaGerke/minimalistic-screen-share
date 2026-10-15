@@ -197,6 +197,9 @@ esac
 if [ -n "${WAYLAND_DISPLAY:-}" ] && ! command -v grim >/dev/null 2>&1; then
 	echo "Hinweis: grim fehlt für die Aufnahme unter Wayland. Auf Arch: sudo pacman -S grim"
 fi
+if [ -n "${WAYLAND_DISPLAY:-}" ] && ! command -v wf-recorder >/dev/null 2>&1; then
+	echo "Hinweis: wf-recorder fehlt – ohne ruckelt der Stream (Einzelbilder statt Video). Auf Arch: sudo pacman -S wf-recorder"
+fi
 if ! command -v parec >/dev/null 2>&1; then
 	echo "Hinweis: parec fehlt für den Systemton. Auf Arch: sudo pacman -S libpulse"
 fi

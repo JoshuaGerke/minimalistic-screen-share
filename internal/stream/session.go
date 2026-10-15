@@ -26,19 +26,23 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/proto"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/version"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/video"
 )
 
 // Options bündelt alles, was eine Sitzung braucht.
 type Options struct {
-	Server     string
-	Room       string
-	Name       string
-	FPS        int
-	Quality    int
-	MaxWidth   int
-	Audio      bool
-	AutoAccept bool
-	Target     capture.Target
+	Server   string
+	Room     string
+	Name     string
+	FPS      int
+	Quality  int
+	MaxWidth int
+	// BitrateKbps gilt für H.264, VideoMode "jpeg" erzwingt den alten Weg.
+	BitrateKbps int
+	VideoMode   string
+	Audio       bool
+	AutoAccept  bool
+	Target      capture.Target
 	// AudioExclude nennt Programme, die nicht mitgestreamt werden sollen.
 	AudioExclude func() []string
 	Log          *log.Logger
@@ -66,6 +70,7 @@ type Status struct {
 	Started time.Time `json:"started,omitempty"`
 	Paused  bool      `json:"paused"`
 	Audio   bool      `json:"audio"`
+	Video   string    `json:"video,omitempty"` // z. B. "H.264 · NVENC" oder "JPEG"
 }
 
 type Session struct {
@@ -88,6 +93,7 @@ type Session struct {
 
 	// Live-Einstellungen: lassen sich während des Streams ändern.
 	fps        atomic.Int32
+	bitrate    atomic.Int32
 	quality    atomic.Int32
 	maxWidth   atomic.Int32
 	audioOn    atomic.Bool
@@ -95,6 +101,12 @@ type Session struct {
 	autoAccept atomic.Bool
 	targetGen  atomic.Int32
 	forceFrame atomic.Bool
+	paramGen   atomic.Int32
+	// h264Off merkt sich die Quellen-Generation (+1), für die H.264 nicht
+	// ging – dann bleibt es für diese Quelle beim JPEG-Weg.
+	h264Off   atomic.Int32
+	codec     atomic.Value // string
+	videoMode atomic.Value // string
 
 	audioAvail atomic.Bool
 	audioRate  atomic.Int32
@@ -114,6 +126,7 @@ type Session struct {
 type outbox struct {
 	prio  chan outMsg
 	frame chan frameJob
+	video chan video.Unit
 	done  chan struct{}
 }
 
@@ -136,6 +149,7 @@ func newOutbox() *outbox {
 	return &outbox{
 		prio:  make(chan outMsg, 256),
 		frame: make(chan frameJob, 1),
+		video: make(chan video.Unit, 120),
 		done:  make(chan struct{}),
 	}
 }
@@ -180,6 +194,9 @@ func New(opts Options) *Session {
 		},
 	}
 	s.fps.Store(int32(opts.FPS))
+	s.bitrate.Store(int32(max(opts.BitrateKbps, 500)))
+	s.codec.Store("")
+	s.videoMode.Store(opts.VideoMode)
 	s.quality.Store(int32(opts.Quality))
 	s.maxWidth.Store(int32(opts.MaxWidth))
 	s.audioOn.Store(opts.Audio)
@@ -228,16 +245,29 @@ func (s *Session) SetAutoAccept(on bool) error {
 	return s.sendJSON(proto.Control{T: "auto", On: on})
 }
 
-// SetParams ändert Bildrate, Qualität und Breite sofort.
-func (s *Session) SetParams(fps, quality, maxWidth int) {
+// SetParams ändert Bildrate, Qualität, Breite und Bitrate sofort.
+func (s *Session) SetParams(fps, quality, maxWidth, bitrateKbps int) {
+	if s.fps.Load() != int32(fps) || s.bitrate.Load() != int32(bitrateKbps) {
+		s.paramGen.Add(1) // H.264-Encoder mit neuen Werten neu starten
+	}
 	if fps > 0 {
 		s.fps.Store(int32(fps))
+	}
+	if bitrateKbps > 0 {
+		s.bitrate.Store(int32(bitrateKbps))
 	}
 	if quality > 0 {
 		s.quality.Store(int32(quality))
 	}
 	s.maxWidth.Store(int32(maxWidth))
 	s.forceFrame.Store(true)
+}
+
+// SetVideoMode wechselt zwischen H.264 ("auto") und JPEG – sofort.
+func (s *Session) SetVideoMode(mode string) {
+	if s.videoMode.Swap(mode) != mode {
+		s.targetGen.Add(1)
+	}
 }
 
 // SetAudio schaltet den Ton im laufenden Stream an oder aus.
@@ -328,6 +358,11 @@ func (s *Session) metaMsg() proto.Control {
 		FPS:   int(s.fps.Load()),
 		Audio: s.audioAvail.Load() && s.audioOn.Load(),
 		Title: s.Target().Label(),
+	}
+	if c := s.codec.Load().(string); c != "" {
+		m.Video, m.Codec = "h264", c
+	} else {
+		m.Video = "jpeg"
 	}
 	if s.audioAvail.Load() {
 		m.Rate = int(s.audioRate.Load())
@@ -520,12 +555,6 @@ func (s *Session) connectAndStream() error {
 	conn.SetReadDeadline(time.Time{})
 	defer s.clearPending()
 
-	src, err := capture.Open(s.Target())
-	if err != nil {
-		s.setState("error", err.Error())
-		return err
-	}
-	defer func() { src.Close() }()
 	s.log.Printf("Stream läuft: %s → Raum %q", s.Target().Label(), s.opts.Room)
 
 	// Ton immer öffnen, wenn es geht – dann lässt er sich live zuschalten.
@@ -579,7 +608,7 @@ func (s *Session) connectAndStream() error {
 	}
 	run(func() error { return s.writeLoop(conn, ob, stop) })
 	run(func() error { return s.readLoop(conn, stop) })
-	run(func() error { return s.captureLoop(&src, ob, stop) })
+	run(func() error { return s.videoLoop(ob, stop) })
 	if audioSrc != nil {
 		run(func() error { s.audioLoop(audioSrc, ob, stop); return nil })
 	}
@@ -611,6 +640,7 @@ func (s *Session) writeLoop(conn *websocket.Conn, ob *outbox, stop <-chan struct
 		return nil
 	}
 	var chunks [][]byte
+	var videoSeq uint32
 	for {
 		select {
 		case m := <-ob.prio:
@@ -624,8 +654,9 @@ func (s *Session) writeLoop(conn *websocket.Conn, ob *outbox, stop <-chan struct
 			if err := write(websocket.BinaryMessage, chunks[0]); err != nil {
 				return err
 			}
+			isJPEG := chunks[0][0] == proto.MsgFrameChunk
 			chunks = chunks[1:]
-			if len(chunks) == 0 {
+			if len(chunks) == 0 && isJPEG {
 				s.frameCount.Add(1)
 			}
 			continue
@@ -637,6 +668,9 @@ func (s *Session) writeLoop(conn *websocket.Conn, ob *outbox, stop <-chan struct
 			}
 		case f := <-ob.frame:
 			chunks = proto.FrameChunks(f.seq, f.ts, f.w, f.h, f.jpeg, chunkSize)
+		case u := <-ob.video:
+			chunks = proto.VideoChunks(videoSeq, nowMS(), u.Key, u.Data, chunkSize)
+			videoSeq++
 		case <-stop:
 			// Restliche Steuernachrichten (z. B. "bye") noch rausschicken.
 			for {
@@ -718,10 +752,156 @@ func (s *Session) readLoop(conn *websocket.Conn, stop <-chan struct{}) error {
 	}
 }
 
-// captureLoop holt Frames im eingestellten Takt. Ohne Zuschauer wird pausiert –
+// errSwitch: Quelle oder Verfahren hat gewechselt – videoLoop entscheidet neu.
+var errSwitch = errors.New("Quelle gewechselt")
+
+// useH264 sagt, ob für die aktuelle Quelle der Hardware-Weg genommen wird.
+func (s *Session) useH264() bool {
+	if s.videoMode.Load() == "jpeg" || s.h264Off.Load() == s.targetGen.Load()+1 {
+		return false
+	}
+	return video.Ready() && video.Supports(s.Target())
+}
+
+func (s *Session) setVideoLabel(label string) {
+	s.mu.Lock()
+	changed := s.status.Video != label
+	s.status.Video = label
+	s.mu.Unlock()
+	if changed {
+		s.notifyStatus()
+	}
+}
+
+// videoLoop wählt pro Quelle das Verfahren: H.264 über die Grafikkarte,
+// wo es geht, sonst JPEG.
+func (s *Session) videoLoop(ob *outbox, stop <-chan struct{}) error {
+	for {
+		gen := s.targetGen.Load()
+		if s.useH264() {
+			err := s.h264Loop(ob, stop, gen)
+			if err == nil {
+				return nil
+			}
+			if err == errSwitch {
+				continue
+			}
+			s.log.Printf("H.264 geht nicht, nehme JPEG: %v", err)
+			s.h264Off.Store(gen + 1)
+			s.codec.Store("")
+			s.sendMeta()
+		}
+		err := s.jpegLoop(ob, stop, gen)
+		if err == errSwitch {
+			continue
+		}
+		return err
+	}
+}
+
+// h264Loop lässt den Encoder laufen, solange jemand zuschaut. Ohne Zuschauer
+// oder bei Pause steht er – das kostet dann gar nichts.
+func (s *Session) h264Loop(ob *outbox, stop <-chan struct{}, gen int32) error {
+	var enc *video.Encoder
+	defer func() {
+		if enc != nil {
+			enc.Close()
+		}
+	}()
+	check := time.NewTicker(200 * time.Millisecond)
+	defer check.Stop()
+	params := s.paramGen.Load()
+	failures := 0
+	skipToKey := false
+
+	for {
+		want := s.viewers.Load() > 0 && !s.paused.Load()
+		if params != s.paramGen.Load() && enc != nil {
+			enc.Close() // neue Bitrate/FPS: Encoder neu starten
+			enc = nil
+		}
+		params = s.paramGen.Load()
+		if want && enc == nil {
+			var err error
+			enc, err = video.Start(video.Options{
+				Target:      s.Target(),
+				FPS:         int(s.fps.Load()),
+				BitrateKbps: int(s.bitrate.Load()),
+				Log:         s.log,
+			})
+			if err != nil {
+				return err
+			}
+			s.setVideoLabel("H.264 · " + enc.Name)
+			skipToKey = true
+		}
+		if !want && enc != nil {
+			enc.Close()
+			enc = nil
+		}
+		var units <-chan video.Unit
+		if enc != nil {
+			units = enc.Units()
+		}
+		select {
+		case <-stop:
+			return nil
+		case <-check.C:
+			if s.targetGen.Load() != gen {
+				return errSwitch
+			}
+		case u, ok := <-units:
+			if !ok {
+				err := enc.Err()
+				enc = nil
+				if failures++; failures > 3 {
+					return err
+				}
+				s.log.Printf("Encoder beendet, starte neu: %v", err)
+				continue
+			}
+			failures = 0
+			if u.Codec != "" && u.Codec != s.codec.Load().(string) {
+				s.codec.Store(u.Codec)
+				s.sendMeta()
+			}
+			// Staut sich die Leitung, lieber bis zum nächsten Keyframe springen
+			// als Sekunden hinterherzuhinken.
+			if len(ob.video) > max(int(s.fps.Load())/2, 10) {
+				skipToKey = true
+			}
+			if skipToKey {
+				if !u.Key {
+					continue
+				}
+				skipToKey = false
+			}
+			select {
+			case ob.video <- u:
+			default:
+				skipToKey = true
+			}
+			s.frameCount.Add(1)
+		}
+	}
+}
+
+// jpegLoop holt Frames im eingestellten Takt. Ohne Zuschauer wird pausiert –
 // das spart Rechenzeit und Traffic, genau wie bei Discord. Unveränderte Bilder
 // werden übersprungen, neue Zuschauer bekommen trotzdem sofort ein Bild.
-func (s *Session) captureLoop(srcp *capture.Source, ob *outbox, stop <-chan struct{}) error {
+func (s *Session) jpegLoop(ob *outbox, stop <-chan struct{}, gen int32) error {
+	src, err := capture.Open(s.Target())
+	if err != nil {
+		s.setState("error", err.Error())
+		return err
+	}
+	defer src.Close()
+	s.setVideoLabel("JPEG")
+	if s.codec.Load().(string) != "" {
+		s.codec.Store("")
+		s.sendMeta()
+	}
+
 	fps := s.fps.Load()
 	ticker := time.NewTicker(time.Second / time.Duration(fps))
 	defer ticker.Stop()
@@ -731,7 +911,7 @@ func (s *Session) captureLoop(srcp *capture.Source, ob *outbox, stop <-chan stru
 	var failures int
 	var prevPix, prevJPEG []byte
 	var lastViewers int32 = -1
-	gen := s.targetGen.Load()
+	lastCheck := time.Now()
 
 	for {
 		select {
@@ -743,24 +923,16 @@ func (s *Session) captureLoop(srcp *capture.Source, ob *outbox, stop <-chan stru
 			fps = f
 			ticker.Reset(time.Second / time.Duration(fps))
 		}
-		// Quelle gewechselt: neu öffnen, ohne die Verbindung anzufassen.
-		if g := s.targetGen.Load(); g != gen {
-			gen = g
-			if next, err := capture.Open(s.Target()); err != nil {
-				s.log.Printf("Quelle wechseln: %v", err)
-				s.mu.Lock()
-				s.status.Err = "Quelle wechseln: " + err.Error()
-				s.mu.Unlock()
-			} else {
-				(*srcp).Close()
-				*srcp = next
-				prevPix, prevJPEG = nil, nil
-				s.forceFrame.Store(true)
-				s.sendMeta()
-				s.log.Printf("Quelle gewechselt: %s", s.Target().Label())
+		if s.targetGen.Load() != gen {
+			return errSwitch
+		}
+		// Ist H.264 inzwischen bereit (z. B. ffmpeg fertig geladen), umsteigen.
+		if time.Since(lastCheck) > 2*time.Second {
+			lastCheck = time.Now()
+			if s.useH264() {
+				return errSwitch
 			}
 		}
-		src := *srcp
 
 		viewers := s.viewers.Load()
 		if viewers == 0 || s.paused.Load() {

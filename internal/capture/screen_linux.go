@@ -316,3 +316,16 @@ func toRGBA(src image.Image) *image.RGBA {
 	draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)
 	return dst
 }
+
+// HyprMonitorName liefert den Hyprland-Namen (z. B. "DP-1") zum Monitorindex –
+// den braucht wf-recorder für die Video-Aufnahme.
+func HyprMonitorName(index int) (string, error) {
+	mons, err := hyprMonitors()
+	if err != nil {
+		return "", err
+	}
+	if index < 0 || index >= len(mons) {
+		return "", fmt.Errorf("Monitor %d gibt es nicht", index+1)
+	}
+	return mons[index].Name, nil
+}

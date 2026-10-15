@@ -15,7 +15,8 @@ Discord kann Screensharing, aber 1080p gibt es nur mit Nitro, unter Linux ist Sy
 - **Anklopfen wie bei Discord**: Wer zuschauen will, klopft an, du klickst „Reinlassen“. Wer einmal drin war, kommt den ganzen Tag ohne neues Anklopfen wieder rein. Auf Wunsch alle sofort reinlassen.
 - **Bildschirm, Monitor oder einzelnes Fenster**, Quelle wechselbar mitten im Stream
 - **Pause-Knopf** für private Momente – Zuschauer sehen „Pausiert“, die Verbindung bleibt
-- **Alle Einstellungen live**: Bildrate (5–60), Qualität, Auflösung (bis Original), Mauszeiger, Ton – ohne Neustart. Vier Voreinstellungen von „Sparsam“ bis „Flüssig“.
+- **Video wie bei Discord/OBS**: Aufnahme und H.264-Encoding auf der Grafikkarte (Windows: Desktop Duplication + NVENC/AMF/QuickSync, Linux: wf-recorder + VAAPI), Hardware-Decoding im Browser per WebCodecs. 1440p mit 60 fps bei ~3 % eines CPU-Kerns.
+- **Alle Einstellungen live**: Bildrate (5–60), Datenrate, Mauszeiger, Ton – ohne Neustart. Vier Voreinstellungen von „Sparsam“ bis „Flüssig“.
 - **Ton ohne Knacken**: Ringpuffer mit durchgehender Umrechnung im AudioWorklet, passt sich an Netzschwankungen und Taktunterschiede der Soundkarten an. Bei engem Upload gehen Bilder verloren, nie der Ton.
 - **Rückkopplungsschutz**: Schaut man auf dem PC zu, der gerade streamt, bleibt der Viewer automatisch stumm.
 - **Viewer** mit Lautstärke, Bild-in-Bild (schwebt über anderen Fenstern), Vollbild, Originalgröße 1:1, Verbindungsdaten und Tastenkürzeln. Hört der Streamer auf, verbindet sich der Viewer von selbst wieder, sobald er weitermacht.
@@ -73,6 +74,7 @@ Der Installer legt die Binaries nach `~/.local/bin` und einen Eintrag ins Anwend
 | `grim`  | Aufnahme unter Wayland (Hyprland/Sway, …) |
 | `libpulse` | Ton über `parec` (Monitor der Standard-Senke) |
 | `wl-clipboard` | Link automatisch in die Zwischenablage (X11: `xclip`) |
+| `wf-recorder` | flüssiges H.264-Video über die Grafikkarte (sonst Einzelbilder) |
 | `slurp` | optional: Bereich mit der Maus auswählen |
 | `waybar` o. ä. | irgendein Tray-Host, der StatusNotifier versteht |
 

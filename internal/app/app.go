@@ -20,6 +20,7 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/stream"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/tunnel"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/version"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/video"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/web"
 )
 
@@ -97,7 +98,8 @@ func (a *App) SaveConfig(c config.Config) error {
 	a.mu.Unlock()
 
 	if sess != nil {
-		sess.SetParams(c.FPS, c.Quality, c.MaxWidth)
+		sess.SetParams(c.FPS, c.Quality, c.MaxWidth, c.Bitrate)
+		sess.SetVideoMode(c.VideoMode)
 		sess.SetAudio(c.Audio)
 		if old.AutoAccept != c.AutoAccept {
 			sess.SetAutoAccept(c.AutoAccept)
@@ -231,16 +233,18 @@ func (a *App) Start(target capture.Target) error {
 	cfg.Save()
 
 	sess := stream.New(stream.Options{
-		Server:     srv,
-		Room:       cfg.Room,
-		Name:       cfg.Name,
-		FPS:        cfg.FPS,
-		Quality:    cfg.Quality,
-		MaxWidth:   cfg.MaxWidth,
-		Audio:      cfg.Audio,
-		AutoAccept: cfg.AutoAccept,
-		Target:     target,
-		Log:        a.log,
+		Server:      srv,
+		Room:        cfg.Room,
+		Name:        cfg.Name,
+		FPS:         cfg.FPS,
+		Quality:     cfg.Quality,
+		MaxWidth:    cfg.MaxWidth,
+		BitrateKbps: cfg.Bitrate,
+		VideoMode:   cfg.VideoMode,
+		Audio:       cfg.Audio,
+		AutoAccept:  cfg.AutoAccept,
+		Target:      target,
+		Log:         a.log,
 		AudioExclude: func() []string {
 			if !excludeInCapture {
 				return nil
@@ -453,6 +457,8 @@ func (a *App) Serve() error {
 		}
 	}
 	a.applyReach()
+	// ffmpeg suchen/laden und Encoder testen, bevor jemand auf Start drückt.
+	go video.Prepare(a.log)
 	return nil
 }
 

@@ -27,6 +27,8 @@ const (
 	joinWait       = 15 * time.Second
 	maxMessageSize = 8 << 20
 	sendQueue      = 128
+	bulkQueue      = 512      // Bild- und Videopakete
+	gopLimit       = 16 << 20 // so viel Video merkt sich der Relay für Neue
 	maxPending     = 20
 	hostGrace      = 20 * time.Second
 	viewerTokenTTL = 12 * time.Hour
@@ -63,20 +65,28 @@ type room struct {
 	// sticky hält die letzte Steuernachricht pro Typ ("meta", "pause"), damit
 	// später freigegebene Zuschauer Tonrate und Zustand ebenfalls kennen.
 	sticky map[string][]byte
+	// gop ist das Video seit dem letzten Keyframe. Neue Zuschauer bekommen
+	// es nachgereicht und sehen sofort ein Bild statt bis zu 2 s zu warten.
+	gop      [][]byte
+	gopBytes int
 }
 
 // stickyTypes sind Steuernachrichten, die neue Zuschauer nachgereicht bekommen.
 var stickyTypes = map[string]bool{"meta": true, "pause": true}
 
 type client struct {
-	srv   *Server
-	conn  *websocket.Conn
-	send  chan []byte
-	role  string
-	name  string
-	room  *room
-	id    uint64
-	token string
+	srv  *Server
+	conn *websocket.Conn
+	send chan []byte // Steuerung und Ton – geht immer vor
+	bulk chan []byte // Bild und Video
+	// needKey: Es ist Video verloren gegangen (oder der Zuschauer ist neu) –
+	// bis zum nächsten Keyframe nichts schicken, was er nicht dekodieren kann.
+	needKey bool
+	role    string
+	name    string
+	room    *room
+	id      uint64
+	token   string
 
 	mu     sync.Mutex
 	closed bool
@@ -131,7 +141,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if tcpConn, ok := conn.UnderlyingConn().(*net.TCPConn); ok {
 		tcpConn.SetWriteBuffer(512 * 1024)
 	}
-	c := &client{srv: s, conn: conn, send: make(chan []byte, sendQueue)}
+	c := &client{srv: s, conn: conn, send: make(chan []byte, sendQueue), bulk: make(chan []byte, bulkQueue), needKey: true}
 
 	conn.SetReadLimit(maxMessageSize)
 	conn.SetReadDeadline(time.Now().Add(joinWait))
@@ -400,6 +410,9 @@ func (s *Server) admitLocked(rm *room, c *client) {
 	for _, msg := range rm.sticky {
 		c.enqueue(msg, true)
 	}
+	for _, msg := range rm.gop {
+		c.enqueue(msg, false)
+	}
 }
 
 // rememberLocked merkt sich eine Freigabe und räumt abgelaufene weg. Der
@@ -459,10 +472,20 @@ func (s *Server) relayBinary(from *client, msg []byte) {
 	priority := len(msg) > 0 && (msg[0] == proto.MsgAudio || msg[0] == proto.MsgSilence)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if from.room == nil || from.room.host != from {
+	rm := from.room
+	if rm == nil || rm.host != from {
 		return
 	}
-	for v := range from.room.viewers {
+	if len(msg) > 0 && msg[0] == proto.MsgVideoChunk {
+		if proto.VideoKeyStart(msg) {
+			rm.gop, rm.gopBytes = rm.gop[:0], 0
+		}
+		if rm.gopBytes+len(msg) <= gopLimit {
+			rm.gop = append(rm.gop, msg)
+			rm.gopBytes += len(msg)
+		}
+	}
+	for v := range rm.viewers {
 		v.enqueue(msg, priority)
 	}
 }
@@ -577,20 +600,43 @@ func (c *client) readLoop() {
 func (c *client) writeLoop() {
 	ticker := time.NewTicker(pingPeriod)
 	defer ticker.Stop()
+	write := func(msg []byte) bool {
+		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+		typ := websocket.BinaryMessage
+		if len(msg) > 0 && msg[0] == '{' {
+			typ = websocket.TextMessage
+		}
+		if err := c.conn.WriteMessage(typ, msg); err != nil {
+			c.conn.Close()
+			return false
+		}
+		return true
+	}
 	for {
+		// Steuerung und Ton zuerst, dann Bild.
 		select {
 		case msg, ok := <-c.send:
 			if !ok {
 				c.conn.Close()
 				return
 			}
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			typ := websocket.BinaryMessage
-			if len(msg) > 0 && msg[0] == '{' {
-				typ = websocket.TextMessage
+			if !write(msg) {
+				return
 			}
-			if err := c.conn.WriteMessage(typ, msg); err != nil {
+			continue
+		default:
+		}
+		select {
+		case msg, ok := <-c.send:
+			if !ok {
 				c.conn.Close()
+				return
+			}
+			if !write(msg) {
+				return
+			}
+		case msg := <-c.bulk:
+			if !write(msg) {
 				return
 			}
 		case <-ticker.C:
@@ -604,12 +650,31 @@ func (c *client) writeLoop() {
 }
 
 // enqueue hängt eine Nachricht an die Sendeschlange. Bei vollen Queues werden
-// Frames verworfen (priority false) oder die älteste Steuernachricht ersetzt
-// (priority true), damit ein hängender Viewer niemanden blockiert.
+// Bilder verworfen (priority false) oder die älteste Steuernachricht ersetzt
+// (priority true), damit ein hängender Viewer niemanden blockiert. Fehlt einem
+// Zuschauer ein Stück Video, bekommt er erst ab dem nächsten Keyframe wieder
+// welches – kaputte Bilder gibt es so nicht.
 func (c *client) enqueue(msg []byte, priority bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
+		return
+	}
+	if !priority {
+		isVideo := len(msg) > 0 && msg[0] == proto.MsgVideoChunk
+		if isVideo && c.needKey {
+			if !proto.VideoKeyStart(msg) {
+				return
+			}
+			c.needKey = false
+		}
+		select {
+		case c.bulk <- msg:
+		default:
+			if isVideo {
+				c.needKey = true
+			}
+		}
 		return
 	}
 	if priority {

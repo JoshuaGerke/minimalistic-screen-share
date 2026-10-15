@@ -12,6 +12,9 @@ const (
 	// zerlegt, damit Tonpakete dazwischen passen und nie hinter einem ganzen
 	// Bild warten müssen.
 	MsgFrameChunk byte = 0x04
+	// MsgVideoChunk ist ein Stück einer H.264-Zugriffseinheit (Annex B).
+	// Aufbau wie MsgFrameChunk, statt Breite steht dort 1 für Keyframes.
+	MsgVideoChunk byte = 0x05
 )
 
 const (
@@ -42,6 +45,9 @@ type Control struct {
 	Names []string `json:"names,omitempty"`
 	On    bool     `json:"on,omitempty"`
 	Token string   `json:"token,omitempty"`
+	// Video ist "h264" oder "jpeg", Codec der WebCodecs-Name (avc1.64002a).
+	Video string `json:"video,omitempty"`
+	Codec string `json:"codec,omitempty"`
 }
 
 // FramePacket baut ein Binärpaket mit einem JPEG-Frame.
@@ -79,9 +85,31 @@ func FrameChunks(seq uint32, ts uint32, w, h int, jpeg []byte, size int) [][]byt
 	return out
 }
 
+// VideoChunks zerlegt eine H.264-Zugriffseinheit in Pakete.
+func VideoChunks(seq, ts uint32, key bool, au []byte, size int) [][]byte {
+	flag := 0
+	if key {
+		flag = 1
+	}
+	out := FrameChunks(seq, ts, flag, 0, au, size)
+	for _, p := range out {
+		p[0] = MsgVideoChunk
+	}
+	return out
+}
+
+// VideoKeyStart meldet das erste Stück eines Keyframes – ab hier kann ein
+// Zuschauer (wieder) einsteigen.
+func VideoKeyStart(b []byte) bool {
+	if len(b) < ChunkHeaderLen || b[0] != MsgVideoChunk {
+		return false
+	}
+	return binary.LittleEndian.Uint16(b[9:]) == 1 && binary.LittleEndian.Uint16(b[13:]) == 0
+}
+
 // ChunkIndex liest Index und Anzahl aus einem Frame-Stück.
 func ChunkIndex(b []byte) (idx, count int, ok bool) {
-	if len(b) < ChunkHeaderLen || b[0] != MsgFrameChunk {
+	if len(b) < ChunkHeaderLen || (b[0] != MsgFrameChunk && b[0] != MsgVideoChunk) {
 		return 0, 0, false
 	}
 	return int(binary.LittleEndian.Uint16(b[13:])), int(binary.LittleEndian.Uint16(b[15:])), true

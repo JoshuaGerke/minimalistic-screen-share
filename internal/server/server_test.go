@@ -340,3 +340,34 @@ func TestApprovalSurvivesRestart(t *testing.T) {
 	again := dialToken(t, ts, "neustart", "viewer", "tok-1")
 	again.waitControl("allowed")
 }
+
+// TestLateViewerStartsAtKeyframe: Wer mitten in einer Bildgruppe dazukommt,
+// bekommt sie ab dem Keyframe nachgereicht – sofort ein Bild, nie Datenmüll.
+func TestLateViewerStartsAtKeyframe(t *testing.T) {
+	ts := newTestServer(t, time.Second, 8)
+	host := dial(t, ts, "gop-raum", "host")
+	host.waitControl("joined")
+	host.send(proto.Control{T: "auto", On: true})
+	host.sync()
+
+	send := func(seq uint32, key bool) {
+		for _, p := range proto.VideoChunks(seq, 0, key, []byte{0, 0, 0, 1, 0x65, byte(seq)}, 1024) {
+			if err := host.conn.WriteMessage(websocket.BinaryMessage, p); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	send(1, false) // vor dem ersten Keyframe – unbrauchbar
+	send(2, true)
+	send(3, false)
+	host.sync()
+
+	viewer := dial(t, ts, "gop-raum", "viewer")
+	viewer.waitControl("allowed")
+	for _, want := range []uint32{2, 3} {
+		_, seq, _, _, _, _ := proto.Header(viewer.waitBinary())
+		if seq != want {
+			t.Fatalf("Bild %d statt %d", seq, want)
+		}
+	}
+}

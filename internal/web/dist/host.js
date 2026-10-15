@@ -85,6 +85,9 @@
   function fillForm() {
     setSelect($('#cfg-fps'), String(cfg.fps || 15), String(cfg.fps));
     setSelect($('#cfg-width'), String(cfg.max_width ?? 1600), `${cfg.max_width} px`);
+    setSelect($('#cfg-bitrate'), String(cfg.bitrate || 6000), `${(cfg.bitrate / 1000).toString().replace('.', ',')} Mbit/s`);
+    $('#cfg-compat').checked = cfg.video_mode === 'jpeg';
+    syncCompat();
     $('#cfg-quality').value = String(cfg.quality || 70);
     $('#quality-label').textContent = qualityText(cfg.quality || 70);
     $('#cfg-audio').checked = !!cfg.audio;
@@ -179,6 +182,8 @@
       fps: Number($('#cfg-fps').value),
       quality: Number($('#cfg-quality').value),
       max_width: Number($('#cfg-width').value),
+      bitrate: Number($('#cfg-bitrate').value),
+      video_mode: $('#cfg-compat').checked ? 'jpeg' : 'auto',
       audio: $('#cfg-audio').checked,
       auto_accept: $('#cfg-auto').checked,
       target: { ...(cfg.target || {}), cursor: $('#cfg-cursor').checked },
@@ -195,7 +200,12 @@
     markPreset();
   }
 
-  for (const id of ['#cfg-fps', '#cfg-width', '#cfg-audio', '#cfg-auto', '#cfg-room', '#cfg-name', '#cfg-server']) {
+  function syncCompat() {
+    for (const el of $$('.compat-only')) el.classList.toggle('hidden', !$('#cfg-compat').checked);
+  }
+  $('#cfg-compat').addEventListener('change', syncCompat);
+
+  for (const id of ['#cfg-fps', '#cfg-bitrate', '#cfg-compat', '#cfg-width', '#cfg-audio', '#cfg-auto', '#cfg-room', '#cfg-name', '#cfg-server']) {
     $(id).addEventListener('change', scheduleSave);
   }
   $('#cfg-quality').addEventListener('input', () => {
@@ -217,6 +227,7 @@
   for (const p of $$('.preset')) {
     p.addEventListener('click', () => {
       $('#cfg-fps').value = p.dataset.fps;
+      $('#cfg-bitrate').value = p.dataset.b;
       $('#cfg-quality').value = p.dataset.q;
       $('#cfg-width').value = p.dataset.w;
       $('#quality-label').textContent = qualityText(Number(p.dataset.q));
@@ -227,7 +238,7 @@
   function markPreset() {
     for (const p of $$('.preset')) {
       p.classList.toggle('active',
-        Number(p.dataset.fps) === cfg.fps && Number(p.dataset.q) === cfg.quality && Number(p.dataset.w) === cfg.max_width);
+        Number(p.dataset.fps) === cfg.fps && Number(p.dataset.b) === cfg.bitrate);
     }
   }
 
@@ -386,6 +397,7 @@
       parts.push(`<b>${fmt(s.kbps ?? 0)}</b>`);
       if (s.rtt_ms) parts.push(`Ping <b>${s.rtt_ms} ms</b>`);
     }
+    if (s.video) parts.push(escapeHTML(s.video));
     if (s.target) parts.push(escapeHTML(s.target));
     if (!s.audio) parts.push('ohne Ton');
     box.innerHTML = parts.map((p) => `<span>${p}</span>`).join('');

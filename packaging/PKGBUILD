@@ -8,6 +8,7 @@ url="https://github.com/JoshuaGerke/minimalistic-screen-share"
 license=('MIT')
 depends=()
 optdepends=(
+	'wf-recorder: flüssiges H.264-Video über die Grafikkarte'
 	'grim: Aufnahme unter Wayland'
 	'slurp: Bereich zum Aufnehmen mit der Maus auswählen'
 	'libpulse: Systemton mitschicken (parec)'

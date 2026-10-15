@@ -88,10 +88,10 @@
     <div class="settings-grid">
       <div class="section-title">Bild</div>
       <div class="presets" id="presets">
-        <button class="preset" type="button" data-fps="10" data-q="55" data-w="1280">Sparsam</button>
-        <button class="preset" type="button" data-fps="15" data-q="70" data-w="1600">Ausgewogen</button>
-        <button class="preset" type="button" data-fps="15" data-q="85" data-w="1920">Scharf (Text, Code)</button>
-        <button class="preset" type="button" data-fps="30" data-q="65" data-w="1600">Flüssig (Videos)</button>
+        <button class="preset" type="button" data-fps="30" data-b="2500" data-q="55" data-w="1280">Sparsam</button>
+        <button class="preset" type="button" data-fps="60" data-b="6000" data-q="70" data-w="1600">Ausgewogen</button>
+        <button class="preset" type="button" data-fps="30" data-b="10000" data-q="85" data-w="1920">Scharf (Text, Code)</button>
+        <button class="preset" type="button" data-fps="60" data-b="12000" data-q="65" data-w="1600">Flüssig (Spiele, Videos)</button>
       </div>
       <label class="field">
         <span>Bilder pro Sekunde</span>
@@ -103,10 +103,26 @@
           <option value="24">24</option>
           <option value="30">30</option>
           <option value="45">45</option>
-          <option value="60">60 (nur bei kleiner Auflösung)</option>
+          <option value="60">60</option>
         </select>
       </label>
       <label class="field">
+        <span>Datenrate</span>
+        <select id="cfg-bitrate">
+          <option value="1500">1,5 Mbit/s – schwache Leitung</option>
+          <option value="2500">2,5 Mbit/s</option>
+          <option value="4000">4 Mbit/s</option>
+          <option value="6000">6 Mbit/s – Standard</option>
+          <option value="8000">8 Mbit/s</option>
+          <option value="12000">12 Mbit/s</option>
+          <option value="20000">20 Mbit/s – nur schnelle Leitungen</option>
+        </select>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="cfg-compat">
+        <span class="label"><b>Kompatibilitätsmodus</b><span>Einzelbilder statt Video. Nur nötig, wenn ein Zuschauer kein Bild bekommt – braucht viel mehr Leistung</span></span>
+      </label>
+      <label class="field compat-only">
         <span>Auflösung (maximale Breite)</span>
         <select id="cfg-width">
           <option value="960">960 px – sehr sparsam</option>
@@ -117,7 +133,7 @@
           <option value="0">Original</option>
         </select>
       </label>
-      <label class="field full">
+      <label class="field full compat-only">
         <span>Bildqualität <b id="quality-label">70</b></span>
         <input id="cfg-quality" type="range" min="30" max="95" step="5">
       </label>

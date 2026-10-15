@@ -10,7 +10,7 @@
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.sh | bash
-sudo pacman -S grim slurp libpulse wl-clipboard   # Aufnahme, Ton, Link kopieren
+sudo pacman -S wf-recorder grim slurp libpulse wl-clipboard   # Video, Bild, Ton, Link kopieren
 mss-share --settings
 ```
 
@@ -53,7 +53,11 @@ Im Fenster unter **Einstellungen → Bild** gibt es vier Voreinstellungen:
 | Scharf (Text, Code) | Programmieren, Dokumente – kleiner Text bleibt lesbar |
 | Flüssig (Videos) | Videos, Spiele, viel Bewegung |
 
-Der Upload ist der Flaschenhals. Wird es eng, lässt die App Bilder weg, **nie den Ton**.
+Das Bild läuft als H.264-Video über die Grafikkarte – wie bei Discord oder OBS: 60 fps in voller Auflösung bei fast null CPU-Last. Die **Datenrate** bestimmt die Schärfe; 6 Mbit/s reichen für einen 1440p-Bildschirm. Wird die Leitung eng, springt das Bild zum nächsten Keyframe, **der Ton bleibt**.
+
+Windows nimmt automatisch den passenden Encoder (NVIDIA, AMD, Intel, sonst Windows/CPU) und lädt dafür beim ersten Start einmalig ffmpeg (~60 MB). Unter Hyprland/Omarchy läuft das Video über `wf-recorder` (VAAPI). Fenster und „Alle Monitore“ laufen noch im alten Einzelbild-Verfahren.
+
+**Kompatibilitätsmodus:** Bekommt ein Zuschauer kein Bild (sehr alter Browser, oder Link über `http://` im WLAN), schaltet den Modus ein – dann wieder Einzelbilder wie früher.
 
 ## Ton
 
@@ -70,7 +74,7 @@ Der Upload ist der Flaschenhals. Wird es eng, lässt die App Bilder weg, **nie d
 | „Gerade wird nichts geteilt“ | Der andere hat noch nicht auf **Teilen starten** gedrückt – offen lassen, es geht von selbst los |
 | Kein Ton | Unten erscheint ein gelber Knopf „Ton ist aus“ – einmal draufklicken |
 | Link funktioniert nicht mehr | Der Link gilt, solange die App beim Streamer läuft. Nach einem Neustart der App gibt es einen neuen Link |
-| Bild ruckelt | Voreinstellung **Sparsam** oder **Ausgewogen** nehmen |
+| Bild ruckelt | Unter Linux `wf-recorder` installiert? Sonst Voreinstellung **Sparsam** nehmen. In den Verbindungsdaten (Taste `I`) muss „H.264“ stehen |
 | Omarchy: „grim fehlt“ | `sudo pacman -S grim` |
 
 ## Wie kommt der Link ins Internet?

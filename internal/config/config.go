@@ -29,6 +29,8 @@ type Config struct {
 	FPS        int            `json:"fps"`
 	Quality    int            `json:"quality"`
 	MaxWidth   int            `json:"max_width"`
+	Bitrate    int            `json:"bitrate"`    // kbit/s für H.264
+	VideoMode  string         `json:"video_mode"` // "auto" (H.264 per Grafikkarte) oder "jpeg"
 	Audio      bool           `json:"audio"`
 	AutoAccept bool           `json:"auto_accept"`
 	MutedApps  []string       `json:"muted_apps,omitempty"`
@@ -45,15 +47,17 @@ func Default() Config {
 		name = "PC"
 	}
 	return Config{
-		Reach:    ReachInternet,
-		Server:   "",
-		Room:     DefaultSessionID(),
-		Name:     name,
-		FPS:      15,
-		Quality:  70,
-		MaxWidth: 1600,
-		Audio:    true,
-		Target:   capture.Primary(),
+		Reach:     ReachInternet,
+		Server:    "",
+		Room:      DefaultSessionID(),
+		Name:      name,
+		FPS:       15,
+		Quality:   70,
+		MaxWidth:  1600,
+		Bitrate:   6000,
+		VideoMode: "auto",
+		Audio:     true,
+		Target:    capture.Primary(),
 	}
 }
 
@@ -145,6 +149,12 @@ func Load() Config {
 		cfg.Quality = loaded.Quality
 	}
 	cfg.MaxWidth = loaded.MaxWidth
+	if loaded.Bitrate > 0 {
+		cfg.Bitrate = loaded.Bitrate
+	}
+	if loaded.VideoMode != "" {
+		cfg.VideoMode = loaded.VideoMode
+	}
 	cfg.Audio = loaded.Audio
 	cfg.AutoAccept = loaded.AutoAccept
 	cfg.MutedApps = loaded.MutedApps
@@ -198,6 +208,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Quality < 20 || c.Quality > 95 {
 		return fmt.Errorf("Qualität muss zwischen 20 und 95 liegen")
+	}
+	if c.Bitrate < 500 || c.Bitrate > 50000 {
+		return fmt.Errorf("Bitrate muss zwischen 500 und 50000 kbit/s liegen")
+	}
+	if c.VideoMode != "auto" && c.VideoMode != "jpeg" {
+		return fmt.Errorf("unbekannter Videomodus: %q", c.VideoMode)
 	}
 	if c.MaxWidth < 0 || c.MaxWidth > 3840 {
 		return fmt.Errorf("maximale Breite muss zwischen 0 und 3840 liegen")

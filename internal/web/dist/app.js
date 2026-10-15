@@ -26,6 +26,7 @@
   let lastPing = 0, lastPong = 0;
   let reconnectTimer = null, reconnectDelay = 1000;
   let lastError = '';
+  let videoKind = '–';
 
   /* ======================================================================
    * Ton
@@ -303,6 +304,8 @@ registerProcessor('mss-player', MssPlayer);`;
         audio.enabled = !!m.audio;
         if (!audio.enabled) audioSend({ reset: true });
         hostName = m.name || hostName;
+        vdec.meta = m.codec || '';
+        videoKind = m.video === 'h264' ? 'H.264' : 'JPEG';
         targetTitle = m.title || targetTitle;
         renderTitle();
         updateAudioUI();
@@ -354,7 +357,83 @@ registerProcessor('mss-player', MssPlayer);`;
    * ==================================================================== */
 
   let asm = { seq: -1, parts: [], got: 0 };
+  let vasm = { seq: -1, parts: [], got: 0, key: false };
   let decoding = false, pendingBlob = null;
+
+  /* H.264 über WebCodecs: Die Grafikkarte des Zuschauers dekodiert, das Bild
+   * landet ohne Umweg im Canvas. Geht nur in sicheren Kontexten (https,
+   * localhost) – darum ist der Internet-Link der Normalfall. */
+  const vdec = { dec: null, codec: '', waitKey: true, ts: 0, meta: '', unsupported: false };
+
+  function spsCodec(au) {
+    for (let i = 0; i + 7 < au.length; i++) {
+      if (au[i] === 0 && au[i + 1] === 0 && au[i + 2] === 1 && (au[i + 3] & 0x1f) === 7) {
+        const h = (b) => b.toString(16).padStart(2, '0');
+        return `avc1.${h(au[i + 4])}${h(au[i + 5])}${h(au[i + 6])}`;
+      }
+    }
+    return '';
+  }
+
+  function configureVideo(codec) {
+    if (vdec.dec && vdec.dec.state !== 'closed') vdec.dec.close();
+    vdec.dec = new VideoDecoder({
+      output: onVideoFrame,
+      error: () => { vdec.waitKey = true; vdec.codec = ''; },
+    });
+    vdec.dec.configure({ codec, optimizeForLatency: true });
+    vdec.codec = codec;
+    vdec.waitKey = true;
+  }
+
+  function onVideoAU(au, key) {
+    if (!('VideoDecoder' in window)) {
+      if (!vdec.unsupported) {
+        vdec.unsupported = true;
+        lastError = 'Dieser Browser kann das Video hier nicht abspielen. Öffne den Link über https (Streamer: Verbindung „Überall“) oder bitte den Streamer um den Kompatibilitätsmodus.';
+        setState('error');
+      }
+      return;
+    }
+    if (key) {
+      const codec = spsCodec(au) || vdec.meta;
+      if (codec && (codec !== vdec.codec || !vdec.dec || vdec.dec.state === 'closed')) {
+        try { configureVideo(codec); } catch (e) { return; }
+      }
+    }
+    if (!vdec.dec || vdec.dec.state !== 'configured') return;
+    if (vdec.waitKey) {
+      if (!key) return;
+      vdec.waitKey = false;
+    }
+    // Kommt der Decoder nicht hinterher, lieber zum nächsten Keyframe springen.
+    if (!key && vdec.dec.decodeQueueSize > 8) {
+      vdec.waitKey = true;
+      return;
+    }
+    vdec.ts += 16667;
+    try {
+      vdec.dec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: vdec.ts, data: au }));
+    } catch (e) {
+      vdec.waitKey = true;
+    }
+  }
+
+  function onVideoFrame(frame) {
+    if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+      canvas.width = frame.displayWidth;
+      canvas.height = frame.displayHeight;
+    }
+    frameW = frame.displayWidth;
+    frameH = frame.displayHeight;
+    ctx2d.drawImage(frame, 0, 0);
+    frame.close();
+    framesDrawn++;
+    if (!hasFrame) {
+      hasFrame = true;
+      if (state === 'waiting') setState('live');
+    }
+  }
 
   function onBinary(buf) {
     bytesIn += buf.byteLength;
@@ -375,6 +454,24 @@ registerProcessor('mss-player', MssPlayer);`;
         frameH = v.getUint16(11, true);
         showFrame(new Blob(asm.parts, { type: 'image/jpeg' }));
         asm = { seq: -1, parts: [], got: 0 };
+      }
+    } else if (type === 5) {
+      if (buf.byteLength < 17) return;
+      const seq = v.getUint32(1, true);
+      const idx = v.getUint16(13, true);
+      const count = v.getUint16(15, true);
+      if (seq !== vasm.seq) vasm = { seq, parts: new Array(count), got: 0, key: v.getUint16(9, true) === 1 };
+      if (!vasm.parts[idx]) {
+        vasm.parts[idx] = new Uint8Array(buf, 17);
+        vasm.got++;
+      }
+      if (vasm.got === count) {
+        const total = vasm.parts.reduce((n, p) => n + p.length, 0);
+        const au = new Uint8Array(total);
+        let off = 0;
+        for (const p of vasm.parts) { au.set(p, off); off += p.length; }
+        onVideoAU(au, vasm.key);
+        vasm = { seq: -1, parts: [], got: 0, key: false };
       }
     } else if (type === 1) {
       if (buf.byteLength <= 13) return;
@@ -474,7 +571,7 @@ registerProcessor('mss-player', MssPlayer);`;
 
     if (audio.core) audio.stats = audio.core.stats();
     if (!$('#stats-panel').classList.contains('hidden')) {
-      $('#stat-res').textContent = frameW ? `${frameW}×${frameH}` : '–';
+      $('#stat-res').textContent = frameW ? `${frameW}×${frameH} · ${videoKind}` : '–';
       $('#stat-fps').textContent = String(fps);
       $('#stat-rate').textContent = fmtRate(kbps);
       $('#stat-ping').textContent = rtt ? `${Math.round(rtt)} ms` : '–';
@@ -699,6 +796,8 @@ registerProcessor('mss-player', MssPlayer);`;
     targetTitle = '';
     hostPaused = false;
     hasFrame = false;
+    vdec.waitKey = true;
+    vdec.unsupported = false;
     reconnectDelay = 1000;
     state = 'connecting';
     checkSelf();
