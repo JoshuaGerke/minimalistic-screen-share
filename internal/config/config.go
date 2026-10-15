@@ -155,9 +155,14 @@ func Load() Config {
 	if cfg.Reach == "" {
 		// Config aus einer Version vor den Modi: Zeigte der Server woanders
 		// hin, war das ein eigener Relay – sonst gleich Internet-Modus.
+		// Eine alte Quick-Tunnel-Adresse eines anderen ist längst tot –
+		// dann lieber gleich den eigenen Tunnel nehmen.
 		cfg.Reach = ReachInternet
-		if !IsLocalServer(cfg.Server) {
+		if !IsLocalServer(cfg.Server) && !strings.Contains(cfg.Server, ".trycloudflare.com") {
 			cfg.Reach = ReachServer
+		}
+		if cfg.Reach != ReachServer {
+			cfg.Server = ""
 		}
 	}
 	cfg.normalize()
