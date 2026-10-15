@@ -10,7 +10,10 @@ import (
 
 // Open liest den Monitor der Standard-Senke mit: Das ist der Systemton,
 // funktioniert unter PulseAudio genauso wie unter PipeWire.
-func Open() (Source, error) {
+//
+// Programme lassen sich unter Linux (noch) nicht einzeln ausnehmen –
+// exclude wird ignoriert, dort schaltet das Panel sie stattdessen stumm.
+func Open(exclude func() []string) (Source, error) {
 	if _, err := exec.LookPath("parec"); err != nil {
 		return nil, errors.New("parec fehlt – bitte libpulse installieren")
 	}
@@ -30,6 +33,9 @@ func Open() (Source, error) {
 	}
 	return &parecSource{cmd: cmd, r: stdout}, nil
 }
+
+// ExclusionNote gibt es nur unter Windows.
+func ExclusionNote() string { return "" }
 
 type parecSource struct {
 	cmd *exec.Cmd

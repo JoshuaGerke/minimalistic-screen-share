@@ -248,6 +248,8 @@ func (a *App) handleAudioSessions(w http.ResponseWriter, r *http.Request) {
 			"sessions":  sessions,
 			"muted":     muted,
 			"streaming": streaming,
+			"exclusive": excludeInCapture,
+			"note":      audio.ExclusionNote(),
 		}
 		if err != nil {
 			resp["error"] = err.Error()
@@ -269,14 +271,22 @@ func (a *App) handleAudioSessions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cfg := a.Config()
-		cfg.MutedApps = toggleString(cfg.MutedApps, name, body.Muted)
+		if excludeInCapture {
+			// Windows kann genau ein Programm aus der Aufnahme nehmen.
+			cfg.MutedApps = nil
+			if body.Muted {
+				cfg.MutedApps = []string{name}
+			}
+		} else {
+			cfg.MutedApps = toggleString(cfg.MutedApps, name, body.Muted)
+		}
 		if err := a.SaveConfig(cfg); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		// Nur während eines Streams sofort umsetzen – sonst würde man sich
 		// selbst den Ton abdrehen.
-		if a.Streaming() {
+		if a.Streaming() && !excludeInCapture {
 			if err := audio.SetMuted(name, body.Muted); err != nil {
 				writeJSON(w, http.StatusOK, map[string]string{"warning": err.Error()})
 				return

@@ -58,8 +58,8 @@ Der Upload ist der Flaschenhals. Wird es eng, lässt die App Bilder weg, **nie d
 ## Ton
 
 - **Systemton mitschicken** schickt alles mit, was du hörst.
-- Programme, die nicht im Stream landen sollen (Discord & Co.), lassen sich während des Teilens im Fenster stummschalten – beim Beenden wird alles zurückgestellt.
-- Soll ein Programm für dich hörbar bleiben, aber nicht im Stream landen: Windows-Lautstärkemixer → beim Programm **„Von Aufnahme ausschließen“** (Knopf „Lautstärkemixer öffnen“ im Fenster).
+- **Windows:** Unter Einstellungen → Ton ein Programm anhaken (z. B. Discord) – es landet nicht mehr im Stream, **du hörst es aber ganz normal weiter**. Wirkt sofort, auch mitten im Stream. Geht für ein Programm gleichzeitig und braucht Windows 10 (2004) oder neuer.
+- **Linux:** Angehakte Programme werden während des Teilens auch bei dir stummgeschaltet und beim Beenden wieder laut.
 - Schaust du **auf demselben PC** zu, der gerade streamt, bleibt der Viewer automatisch stumm – sonst würde der Ton sich selbst wieder aufnehmen und extrem laut rückkoppeln.
 
 ## Wenn was klemmt

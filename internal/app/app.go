@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -240,6 +241,12 @@ func (a *App) Start(target capture.Target) error {
 		AutoAccept: cfg.AutoAccept,
 		Target:     target,
 		Log:        a.log,
+		AudioExclude: func() []string {
+			if !excludeInCapture {
+				return nil
+			}
+			return a.Config().MutedApps
+		},
 	})
 	sess.SetOnChange(a.onSessionStatus)
 	a.sess = sess
@@ -261,7 +268,9 @@ func (a *App) Start(target capture.Target) error {
 		}
 	}()
 
-	go a.holdMutes(sess)
+	if !excludeInCapture {
+		go a.holdMutes(sess)
+	}
 	a.copyLinkIfReady()
 	return nil
 }
@@ -293,6 +302,11 @@ func (a *App) copyLinkIfReady() {
 	}
 	a.notify("Link kopiert", "Einfach im Chat einfügen (Strg+V) – wer ihn öffnet, klopft bei dir an.")
 }
+
+// excludeInCapture: Unter Windows nimmt die Aufnahme Programme aus, die du
+// selbst weiter hörst. Unter Linux geht das noch nicht – dort werden sie
+// während des Streams stummgeschaltet.
+const excludeInCapture = runtime.GOOS == "windows"
 
 // holdMutes hält die Stummschaltung der Tonquellen aktuell, solange die
 // Sitzung läuft – auch wenn ein Programm erst später Ton spielt. Beim Ende
@@ -431,6 +445,13 @@ func (a *App) Serve() error {
 		}
 	}()
 	a.log.Printf("Bedienpanel läuft auf %s", a.PanelURL())
+	if excludeInCapture {
+		// Ältere Versionen haben ausgenommene Programme bei dir stumm
+		// geschaltet; wurde die App hart beendet, blieben sie stumm.
+		for _, name := range a.Config().MutedApps {
+			audio.SetMuted(name, false)
+		}
+	}
 	a.applyReach()
 	return nil
 }

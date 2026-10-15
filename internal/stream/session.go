@@ -39,7 +39,9 @@ type Options struct {
 	Audio      bool
 	AutoAccept bool
 	Target     capture.Target
-	Log        *log.Logger
+	// AudioExclude nennt Programme, die nicht mitgestreamt werden sollen.
+	AudioExclude func() []string
+	Log          *log.Logger
 }
 
 // Knock ist eine Zuschaueranfrage, die auf Freigabe wartet.
@@ -527,7 +529,7 @@ func (s *Session) connectAndStream() error {
 	s.log.Printf("Stream läuft: %s → Raum %q", s.Target().Label(), s.opts.Room)
 
 	// Ton immer öffnen, wenn es geht – dann lässt er sich live zuschalten.
-	audioSrc, err := audio.Open()
+	audioSrc, err := audio.Open(s.opts.AudioExclude)
 	if err != nil {
 		s.log.Printf("Ton nicht verfügbar, streame nur Bild: %v", err)
 		audioSrc = nil

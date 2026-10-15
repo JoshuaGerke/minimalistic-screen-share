@@ -453,22 +453,33 @@
 
   let audioPolled = 0;
   async function pollAudioSources() {
-    const card = $('#audio-sources-card');
-    card.classList.toggle('hidden', !st.streaming);
-    if (!st.streaming || Date.now() - audioPolled < 3000) return;
+    if (Date.now() - audioPolled < 3000) return;
     audioPolled = Date.now();
     const data = await api('/api/audiosessions').catch(() => null);
     if (data) renderAudioSources(data);
   }
 
   function renderAudioSources(data) {
+    $('#audio-sources-card').classList.remove('hidden');
+    const exclusive = !!data.exclusive;
+    $('#audio-sources-title').textContent = exclusive
+      ? 'Ein Programm nicht mitstreamen – du hörst es weiter (z. B. Discord)'
+      : 'Programme beim Teilen stummschalten (z. B. Discord)';
     const box = $('#audio-sources');
     const muted = new Set((data.muted || []).map((n) => n.toLowerCase()));
     const hint = $('#audio-sources-hint');
-    hint.textContent = data.error || 'Wird beim Beenden automatisch wieder laut gestellt. Soll ein Programm für dich hörbar bleiben, aber nicht im Stream landen: im Lautstärkemixer „Von Aufnahme ausschließen“.';
-    hint.className = data.error ? 'link-note warn' : 'link-note';
+    const problem = data.error || data.note;
+    hint.textContent = problem || (exclusive
+      ? 'Wirkt sofort, auch mitten im Stream. Die Liste zeigt Programme, die gerade Ton spielen.'
+      : 'Unter Linux werden sie während des Teilens auch bei dir stumm und beim Beenden wieder laut.');
+    hint.className = problem ? 'link-note warn' : 'link-note';
+
+    // Das ausgenommene Programm bleibt in der Liste, auch wenn es gerade still ist.
+    const sessions = (data.sessions || []).slice();
+    for (const n of muted) {
+      if (!sessions.some((x) => x.name.toLowerCase() === n)) sessions.push({ name: n, label: n });
+    }
     box.innerHTML = '';
-    const sessions = data.sessions || [];
     if (sessions.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'link-note';
@@ -483,6 +494,9 @@
       cb.type = 'checkbox';
       cb.checked = muted.has(s.name.toLowerCase());
       cb.addEventListener('change', async () => {
+        if (exclusive && cb.checked) {
+          for (const other of box.querySelectorAll('input')) if (other !== cb) other.checked = false;
+        }
         await api('/api/audiosessions', { name: s.name, muted: cb.checked }).catch(() => {});
         audioPolled = 0;
       });

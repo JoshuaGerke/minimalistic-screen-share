@@ -20,7 +20,7 @@ Discord kann Screensharing, aber 1080p gibt es nur mit Nitro, unter Linux ist Sy
 - **Rückkopplungsschutz**: Schaut man auf dem PC zu, der gerade streamt, bleibt der Viewer automatisch stumm.
 - **Viewer** mit Lautstärke, Bild-in-Bild (schwebt über anderen Fenstern), Vollbild, Originalgröße 1:1, Verbindungsdaten und Tastenkürzeln. Hört der Streamer auf, verbindet sich der Viewer von selbst wieder, sobald er weitermacht.
 - **Pausiert automatisch, wenn niemand zuschaut** – spart CPU und Traffic. Unveränderte Bilder werden gar nicht erst verschickt.
-- Programme beim Teilen **stummschalten** (z. B. Discord), Autostart per Schalter
+- **Ein Programm nicht mitstreamen** (z. B. Discord) – unter Windows hörst du es trotzdem weiter (Prozess-Loopback), unter Linux wird es beim Teilen stummgeschaltet. Autostart per Schalter.
 - Läuft als Tray-App (Windows: Infobereich, Linux: StatusNotifier für waybar & Co.)
 
 ## Wie es aussieht
