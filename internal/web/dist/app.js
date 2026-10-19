@@ -23,7 +23,7 @@
   let viewers = 0;
   let frameW = 0, frameH = 0;
   let framesDrawn = 0, bytesIn = 0, fps = 0, kbps = 0, rtt = 0;
-  let lastPing = 0, lastPong = 0;
+  let lastPing = 0, lastPong = 0, unanswered = 0;
   let reconnectTimer = null, reconnectDelay = 1000;
   let lastError = '';
   let videoKind = '–';
@@ -238,6 +238,7 @@ registerProcessor('mss-player', MssPlayer);`;
     cleanup();
     wantConnect = true;
     lastPong = 0;
+    unanswered = 0;
     setState(state === 'offline' ? 'offline' : 'connecting');
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     try {
@@ -251,6 +252,7 @@ registerProcessor('mss-player', MssPlayer);`;
       ws.send(JSON.stringify({ t: 'join', room, role: 'viewer', name: myName || 'Gast', token: tokenFor(room) }));
     };
     ws.onmessage = (ev) => {
+      unanswered = 0; // jedes Paket zeigt: Die Leitung lebt
       if (typeof ev.data === 'string') {
         let m;
         try { m = JSON.parse(ev.data); } catch (e) { return; }
@@ -286,6 +288,7 @@ registerProcessor('mss-player', MssPlayer);`;
   setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       lastPing = performance.now();
+      if (!unanswered) unanswered = lastPing;
       ws.send(JSON.stringify({ t: 'ping', ts: Date.now() }));
     }
   }, 3000);
@@ -591,8 +594,11 @@ registerProcessor('mss-player', MssPlayer);`;
     }
     audio.peak = 0;
 
-    // Antwortet der Server nicht mehr, ist die Leitung tot – neu verbinden.
-    if (ws && ws.readyState === WebSocket.OPEN && lastPong && performance.now() - lastPong > 12000) {
+    // Tot ist die Leitung erst, wenn auf einen gesendeten Ping 12 s lang gar
+    // nichts mehr kommt. Nicht einfach "letztes Pong ist alt": Im
+    // Hintergrund-Tab laufen Timer nur noch einmal pro Minute – dann wäre
+    // jedes Pong alt, und der Viewer flog minütlich raus.
+    if (ws && ws.readyState === WebSocket.OPEN && unanswered && performance.now() - unanswered > 12000) {
       setState('reconnecting');
       cleanup();
       scheduleReconnect();

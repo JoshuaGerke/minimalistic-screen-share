@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
@@ -28,6 +30,7 @@ func Start(o Options) (*Encoder, error) {
 		return nil, fmt.Errorf("%w: wf-recorder fehlt (pacman -S wf-recorder)", ErrUnsupported)
 	}
 	var where []string
+	output := ""
 	switch o.Target.Kind {
 	case "monitor":
 		name, err := capture.HyprMonitorName(o.Target.Monitor)
@@ -35,6 +38,7 @@ func Start(o Options) (*Encoder, error) {
 			return nil, err
 		}
 		where = []string{"-o", name}
+		output = name
 	case "region":
 		r := o.Target.Region
 		where = []string{"-g", fmt.Sprintf("%d,%d %dx%d", r.X, r.Y, r.W&^1, r.H&^1)}
@@ -53,7 +57,7 @@ func Start(o Options) (*Encoder, error) {
 		name string
 		args []string
 	}{
-		{"VAAPI", append([]string{"-c", "h264_vaapi", "-d", "/dev/dri/renderD128", "-p", "rc_mode=CBR"}, common...)},
+		{"VAAPI", append([]string{"-c", "h264_vaapi", "-d", renderNode(output), "-p", "rc_mode=CBR"}, common...)},
 		{"CPU (x264)", append([]string{"-c", "libx264", "-x", "yuv420p", "-p", "preset=ultrafast", "-p", "tune=zerolatency"}, common...)},
 	}
 	var lastErr error
@@ -70,7 +74,7 @@ func Start(o Options) (*Encoder, error) {
 			continue
 		}
 		if o.Log != nil {
-			o.Log.Printf("Video: %s über wf-recorder/%s", o.Target.Label(), t.name)
+			o.Log.Printf("Video: %s über wf-recorder/%s (%s)", o.Target.Label(), t.name, renderNode(output))
 		}
 		return enc, nil
 	}
@@ -91,3 +95,35 @@ func Ready() bool {
 
 // Supports nennt die Ziele, die wf-recorder aufnehmen kann.
 func Supports(t capture.Target) bool { return t.Kind == "monitor" || t.Kind == "region" }
+
+// renderNode sucht die Grafikkarte, an der der Monitor hängt. Bei zwei
+// Grafikkarten (z. B. dedizierte plus die im Prozessor) würde sonst jedes
+// Bild zur falschen Karte kopiert – das bremst den Compositor und lässt die
+// Maus ruckeln.
+func renderNode(output string) string {
+	statuses, _ := filepath.Glob("/sys/class/drm/card*-*/status")
+	fallback := ""
+	for _, st := range statuses {
+		b, err := os.ReadFile(st)
+		if err != nil || strings.TrimSpace(string(b)) != "connected" {
+			continue
+		}
+		conn := filepath.Base(filepath.Dir(st)) // z. B. "card1-DP-1"
+		card, name, _ := strings.Cut(conn, "-")
+		nodes, _ := filepath.Glob("/sys/class/drm/" + card + "/device/drm/renderD*")
+		if len(nodes) == 0 {
+			continue
+		}
+		node := "/dev/dri/" + filepath.Base(nodes[0])
+		if name == output {
+			return node
+		}
+		if fallback == "" {
+			fallback = node
+		}
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return "/dev/dri/renderD128"
+}

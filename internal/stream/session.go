@@ -813,9 +813,15 @@ func (s *Session) h264Loop(ob *outbox, stop <-chan struct{}, gen int32) error {
 	params := s.paramGen.Load()
 	failures := 0
 	skipToKey := false
+	var lastWatched time.Time
 
 	for {
-		want := s.viewers.Load() > 0 && !s.paused.Load()
+		// Nach dem letzten Zuschauer läuft der Encoder noch kurz weiter: Ein
+		// Viewer, der sich neu verbindet, soll keinen Neustart auslösen.
+		if s.viewers.Load() > 0 {
+			lastWatched = time.Now()
+		}
+		want := !s.paused.Load() && time.Since(lastWatched) < 15*time.Second
 		if params != s.paramGen.Load() && enc != nil {
 			enc.Close() // neue Bitrate/FPS: Encoder neu starten
 			enc = nil
