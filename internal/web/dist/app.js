@@ -174,10 +174,17 @@ registerProcessor('mss-player', MssPlayer);`;
     applyVolume();
     const ask = (port) => fetch(`http://127.0.0.1:${port}/api/hello?room=${encodeURIComponent(room)}`,
       { cache: 'no-store', signal: AbortSignal.timeout(1500) })
-      .then((r) => r.json()).then((d) => !!d.self).catch(() => false);
-    const ports = [];
-    for (let p = 7777; p < 7782; p++) ports.push(ask(p));
-    const self = (await Promise.all(ports)).some(Boolean);
+      .then((r) => r.json().then((d) => (d.self ? 'self' : 'app'), () => 'other'), () => 'none');
+    // Die App nimmt den ersten freien Port ab 7777 und läuft nur einmal. Also
+    // der Reihe nach fragen und bei der ersten Antwort (oder dem ersten
+    // geschlossenen Port) aufhören – so landen keine Fehlerzeilen für leere
+    // Ports in der Konsole.
+    let self = false;
+    for (let p = 7777; p < 7782; p++) {
+      const r = await ask(p);
+      if (r === 'self') self = true;
+      if (r !== 'other') break; // fremdes Programm auf dem Port: weiter suchen
+    }
     selfGuard.self = selfGuard.self || self;
     selfGuard.pending = false;
     applyVolume();

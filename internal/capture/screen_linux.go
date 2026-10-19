@@ -33,8 +33,12 @@ type grimSource struct {
 	target Target
 	name   string
 	region string
-	scaled bool
-	scale  float64
+	// scale ist grims eigener Verkleinerungsfaktor für forWidth. noScale:
+	// grim -s liefert auf diesem Monitor Unsinn (z. B. "Empty JPEG image"
+	// bei fraktionaler Skalierung) – dann verkleinern wir selbst.
+	scale    float64
+	forWidth int
+	noScale  bool
 }
 
 func openWayland(t Target) (Source, error) {
@@ -88,12 +92,46 @@ func (s *grimSource) GrabJPEG(quality, maxWidth int) ([]byte, int, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if maxWidth != s.forWidth {
+		s.forWidth, s.scale = maxWidth, 0
+	}
+	if maxWidth > 0 && s.scale > 0 && !s.noScale {
+		out, w, h, err := s.grim(quality, s.scale)
+		if err == nil {
+			return out, w, h, nil
+		}
+		s.noScale = true
+	}
+	out, w, h, err := s.grim(quality, 0)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if maxWidth <= 0 || w <= maxWidth {
+		return out, w, h, nil
+	}
+	if !s.noScale {
+		s.scale = float64(maxWidth) / float64(w) // ab dem nächsten Bild skaliert grim
+	}
+	img, err := jpeg.Decode(bytes.NewReader(out))
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("grim-Ausgabe unlesbar: %v", err)
+	}
+	small := Scale(toRGBA(img), maxWidth)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, small, &jpeg.Options{Quality: quality}); err != nil {
+		return nil, 0, 0, err
+	}
+	return buf.Bytes(), small.Bounds().Dx(), small.Bounds().Dy(), nil
+}
+
+// grim nimmt ein JPEG auf, mit scale > 0 gleich verkleinert.
+func (s *grimSource) grim(quality int, scale float64) ([]byte, int, int, error) {
 	args := []string{"-t", "jpeg", "-q", strconv.Itoa(quality)}
 	if s.region != "" {
 		args = append(args, "-g", s.region)
 	}
-	if maxWidth > 0 && s.scaled {
-		args = append(args, "-s", strconv.FormatFloat(s.scale, 'f', 4, 64))
+	if scale > 0 {
+		args = append(args, "-s", strconv.FormatFloat(scale, 'f', 4, 64))
 	}
 	args = append(args, "-")
 
@@ -105,23 +143,8 @@ func (s *grimSource) GrabJPEG(quality, maxWidth int) ([]byte, int, int, error) {
 		return nil, 0, 0, fmt.Errorf("grim: %v (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	cfg, err := jpeg.DecodeConfig(bytes.NewReader(out))
-	if err != nil {
+	if err != nil || cfg.Width == 0 || cfg.Height == 0 {
 		return nil, 0, 0, fmt.Errorf("grim-Ausgabe unlesbar: %v", err)
-	}
-	if maxWidth > 0 && !s.scaled {
-		// Beim ersten Frame die Größe messen, danach skaliert grim selbst.
-		s.scaled = true
-		if cfg.Width > maxWidth {
-			s.scale = float64(maxWidth) / float64(cfg.Width)
-			img, err := jpeg.Decode(bytes.NewReader(out))
-			if err == nil {
-				small := Scale(toRGBA(img), maxWidth)
-				var buf bytes.Buffer
-				if err := jpeg.Encode(&buf, small, &jpeg.Options{Quality: quality}); err == nil {
-					return buf.Bytes(), small.Bounds().Dx(), small.Bounds().Dy(), nil
-				}
-			}
-		}
 	}
 	return out, cfg.Width, cfg.Height, nil
 }

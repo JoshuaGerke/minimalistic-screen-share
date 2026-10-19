@@ -911,6 +911,7 @@ func (s *Session) jpegLoop(ob *outbox, stop <-chan struct{}, gen int32) error {
 	var failures int
 	var prevPix, prevJPEG []byte
 	var lastViewers int32 = -1
+	var retryAt time.Time
 	lastCheck := time.Now()
 
 	for {
@@ -935,7 +936,7 @@ func (s *Session) jpegLoop(ob *outbox, stop <-chan struct{}, gen int32) error {
 		}
 
 		viewers := s.viewers.Load()
-		if viewers == 0 || s.paused.Load() {
+		if viewers == 0 || s.paused.Load() || time.Now().Before(retryAt) {
 			continue
 		}
 		force := viewers != lastViewers || s.forceFrame.Swap(false)
@@ -947,12 +948,10 @@ func (s *Session) jpegLoop(ob *outbox, stop <-chan struct{}, gen int32) error {
 		if jpegSrc, ok := src.(capture.JPEGSource); ok {
 			jd, jw, jh, err := jpegSrc.GrabJPEG(quality, maxWidth)
 			if err != nil {
-				if failures++; failures > 5 {
-					return fmt.Errorf("Aufnahme: %w", err)
-				}
+				s.captureFailed(&failures, &retryAt, err)
 				continue
 			}
-			failures = 0
+			s.captureOK(&failures)
 			if !force && bytes.Equal(jd, prevJPEG) {
 				continue
 			}
@@ -961,12 +960,10 @@ func (s *Session) jpegLoop(ob *outbox, stop <-chan struct{}, gen int32) error {
 		} else {
 			img, err := src.Grab()
 			if err != nil {
-				if failures++; failures > 5 {
-					return fmt.Errorf("Aufnahme: %w", err)
-				}
+				s.captureFailed(&failures, &retryAt, err)
 				continue
 			}
-			failures = 0
+			s.captureOK(&failures)
 			img = capture.Scale(img, maxWidth)
 			if !force && bytes.Equal(img.Pix, prevPix) {
 				continue
@@ -985,6 +982,32 @@ func (s *Session) jpegLoop(ob *outbox, stop <-chan struct{}, gen int32) error {
 		s.width.Store(int32(w))
 		s.height.Store(int32(h))
 	}
+}
+
+// captureFailed: Klappt die Aufnahme mehrmals hintereinander nicht, steht der
+// Fehler im Panel und es wird alle 2 s neu versucht. Die Verbindung bleibt –
+// früher flogen dadurch alle Zuschauer im Sekundentakt raus.
+func (s *Session) captureFailed(failures *int, retryAt *time.Time, err error) {
+	if *failures++; *failures < 6 {
+		return
+	}
+	if *failures == 6 {
+		s.log.Printf("Aufnahme klappt nicht: %v", err)
+	}
+	s.mu.Lock()
+	s.status.Err = "Aufnahme: " + err.Error()
+	s.mu.Unlock()
+	*retryAt = time.Now().Add(2 * time.Second)
+}
+
+func (s *Session) captureOK(failures *int) {
+	if *failures >= 6 {
+		s.log.Println("Aufnahme läuft wieder")
+		s.mu.Lock()
+		s.status.Err = ""
+		s.mu.Unlock()
+	}
+	*failures = 0
 }
 
 // audioLoop liest den Systemton und schickt ihn in 20-ms-Häppchen.
