@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screen Share</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ---------- Start: Raum betreten oder anlegen ---------- -->
+<div id="start" class="start hidden">
+  <form id="join-form" class="card join" autocomplete="off">
+    <div class="brand">
+      <div class="logo small"><svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="4" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 20h8M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></div>
+      <div><h1>Screen Share</h1><p class="dim small">Räume mit Sprache, Bildschirm, Chat und Dateien – Ende-zu-Ende verschlüsselt.</p></div>
+    </div>
+    <label class="field"><span>Dein Name</span><input id="j-name" maxlength="32" required></label>
+    <label class="field"><span>Raum-ID <button class="link" id="j-random" type="button">zufällig</button></span>
+      <input id="j-room" maxlength="32" placeholder="z. B. buero-nils" required pattern="[a-zA-Z0-9-]{2,32}" spellcheck="false"></label>
+    <label class="field"><span>Passwort <button class="link" id="j-show" type="button">zeigen</button></span>
+      <input id="j-pass" type="password" minlength="6" required placeholder="mindestens 6 Zeichen"></label>
+    <label class="switch"><input type="checkbox" id="j-remember" checked><span class="label"><b>Raum merken</b><span>Nächstes Mal mit einem Klick – das Passwort selbst wird nicht gespeichert</span></span></label>
+    <p class="error hidden" id="j-error"></p>
+    <button class="btn primary big wide" type="submit">Betreten</button>
+    <p class="fine">Gibt es den Raum noch nicht, legst du ihn damit an. Die anderen geben dieselbe ID und dasselbe Passwort ein.</p>
+    <div id="saved" class="saved hidden"><h3>Gemerkte Räume</h3><div id="saved-list"></div></div>
+  </form>
+  <button class="btn icon corner" id="start-settings" type="button" title="Einstellungen" aria-label="Einstellungen">
+    <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+  </button>
+</div>
+
+<!-- ---------- Im Raum ---------- -->
+<div id="room" class="room hidden">
+  <header class="bar">
+    <button class="room-chip" id="room-id" type="button" title="Raum-ID kopieren"></button>
+    <span class="status"><span class="dot" id="room-dot"></span><span id="room-state"></span></span>
+    <span class="lock" title="Ende-zu-Ende verschlüsselt: Bild, Ton, Chat und Dateien kann nur lesen, wer das Passwort kennt.">
+      <svg viewBox="0 0 24 24" width="14" height="14"><rect x="5" y="11" width="14" height="9" rx="2" fill="currentColor"/><path d="M8 11V8a4 4 0 018 0v3" fill="none" stroke="currentColor" stroke-width="2"/></svg>E2E</span>
+    <span class="spacer"></span>
+    <button class="btn icon" id="btn-settings" type="button" title="Einstellungen" aria-label="Einstellungen">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+    </button>
+    <button class="btn ghost" id="btn-leave" type="button">Verlassen</button>
+  </header>
+
+  <main class="main">
+    <section class="stage-area">
+      <div id="stage" class="stage">
+        <div id="stage-empty" class="stage-empty">
+          <p class="big">Noch teilt niemand.</p>
+          <p class="dim">Unten „Bildschirm teilen“ – die anderen sehen ihn dann hier.</p>
+        </div>
+        <div id="stage-label" class="stage-label hidden"></div>
+        <div id="point-hint" class="point-hint hidden">5× schnell klicken = zeigen</div>
+      </div>
+      <div id="tiles" class="tiles hidden"></div>
+      <div class="dock">
+        <button class="btn primary" id="btn-share" type="button">
+          <svg viewBox="0 0 24 24" width="18" height="18"><rect x="3" y="4" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 20h8M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Bildschirm teilen</span></button>
+        <button class="btn ghost hidden" id="btn-source" type="button">Quelle wechseln</button>
+        <button class="btn ghost hidden" id="btn-pause" type="button">Pausieren</button>
+        <span id="share-info" class="dim small"></span>
+        <span class="spacer"></span>
+        <label class="volume" title="Ton des groß gezeigten Bildschirms">
+          <button class="btn icon" id="btn-sound" type="button" aria-label="Ton des Bildschirms an/aus">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path class="wave" d="M16 9a4 4 0 010 6M18.5 6.5a7.5 7.5 0 010 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path class="slash" d="M4 4l16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <input type="range" id="vol" min="0" max="100" step="1">
+        </label>
+        <button class="btn icon" id="btn-full" type="button" title="Vollbild (Doppelklick aufs Bild)" aria-label="Vollbild">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div class="side-top">
+        <h3>Im Raum <span id="count" class="dim"></span></h3>
+        <div id="members" class="members"></div>
+        <div id="voice"></div>
+      </div>
+      <div class="chat">
+        <div id="messages" class="messages"></div>
+        <form id="chat-form" class="chat-form" autocomplete="off">
+          <button class="btn icon" id="btn-attach" type="button" title="Datei senden" aria-label="Datei senden">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M20 11.5l-7.8 7.8a5 5 0 01-7.1-7.1l8.5-8.5a3.3 3.3 0 014.7 4.7l-8.5 8.5a1.7 1.7 0 01-2.4-2.4l7.8-7.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+          <input id="chat-input" maxlength="4000" placeholder="Nachricht…">
+          <input type="file" id="file-input" multiple hidden>
+        </form>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<!-- ---------- Quelle wählen ---------- -->
+<dialog id="pick" class="modal">
+  <div class="modal-head"><h2>Was möchtest du teilen?</h2><button class="btn icon" data-close type="button" aria-label="Schließen">✕</button></div>
+  <div id="pick-list" class="pick-list"></div>
+  <label class="switch"><input type="checkbox" id="pick-audio"><span class="label"><b>Systemton mitteilen</b><span>Was du hörst, hören die anderen mit (ohne die Stimmen aus dem Raum)</span></span></label>
+</dialog>
+
+<!-- ---------- Einstellungen ---------- -->
+<dialog id="settings" class="modal wide">
+  <div class="modal-head">
+    <h2>Einstellungen</h2>
+    <nav class="tabs">
+      <button type="button" data-tab="general" class="active">Allgemein</button>
+      <button type="button" data-tab="share">Teilen</button>
+      <button type="button" data-tab="voice">Sprache</button>
+    </nav>
+    <button class="btn icon" data-close type="button" aria-label="Schließen">✕</button>
+  </div>
+
+  <section class="tab" data-tab="general">
+    <div class="grid">
+      <label class="field"><span>Dein Name</span><input data-cfg="name" maxlength="32"></label>
+      <label class="field"><span>Wenn dieser PC den Raum betreibt</span><select data-cfg="reach">
+        <option value="internet">Überall erreichbar (Internet)</option>
+        <option value="lan">Nur im eigenen Netzwerk</option></select></label>
+      <label class="switch full"><input type="checkbox" id="s-autostart"><span class="label"><b>Beim Anmelden starten</b><span>Die App sitzt dann still im Infobereich</span></span></label>
+      <label class="field"><span>Beim Start automatisch betreten</span><select data-cfg="auto_join"></select></label>
+      <div class="field auto-only"><span>Danach</span>
+        <label class="switch"><input type="checkbox" data-cfg="auto_voice"><span class="label"><b>Sprachkanal beitreten</b></span></label>
+        <label class="switch"><input type="checkbox" data-cfg="auto_muted"><span class="label"><b>…mit stummem Mikrofon</b></span></label>
+        <label class="switch"><input type="checkbox" data-cfg="auto_share"><span class="label"><b>Bildschirm teilen</b></span></label>
+      </div>
+    </div>
+    <h3 class="section">Version <span id="s-version" class="dim"></span></h3>
+    <div class="row-btns">
+      <button class="btn primary hidden" id="s-update" type="button"></button>
+      <span id="s-update-text" class="dim small"></span>
+    </div>
+    <h3 class="section">Fehlersuche</h3>
+    <label class="switch"><input type="checkbox" data-cfg="diagnose"><span class="label"><b>Diagnosemodus</b><span>Schreibt alle 2 Sekunden Leistungsdaten ins Log</span></span></label>
+    <div class="row-btns"><button class="btn ghost" id="s-log" type="button">Log öffnen</button><button class="btn ghost" id="s-quit" type="button">App beenden</button></div>
+  </section>
+
+  <section class="tab hidden" data-tab="share">
+    <div class="grid">
+      <label class="field"><span>Bilder pro Sekunde <b id="fps-label"></b></span><input type="range" min="10" max="120" step="5" data-cfg="fps"></label>
+      <label class="field"><span>Datenrate <b id="br-label"></b></span><input type="range" min="1000" max="30000" step="500" data-cfg="bitrate"></label>
+      <label class="switch"><input type="checkbox" data-cfg="audio"><span class="label"><b>Systemton mitteilen</b><span>Standard für neues Teilen</span></span></label>
+      <label class="switch"><input type="checkbox" data-cfg-target="cursor"><span class="label"><b>Mauszeiger zeigen</b></span></label>
+      <label class="switch full"><input type="checkbox" data-cfg="pointing"><span class="label"><b>Zeigen erlauben</b><span>Klickt jemand 5× schnell auf deinen Bildschirm, erscheint bei dir ein Ring an der Stelle</span></span></label>
+    </div>
+    <h3 class="section">Programm nicht mitteilen</h3>
+    <p class="dim small" id="apps-note"></p>
+    <div id="apps" class="apps"></div>
+  </section>
+
+  <section class="tab hidden" data-tab="voice"><div id="voice-settings"></div></section>
+</dialog>
+
+<div id="drop" class="drop hidden"><div>Loslassen zum Senden – verschlüsselt an alle im Raum</div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="audio-core.js"></script>
+<script src="e2e.js"></script>
+<script src="voice.js"></script>
+<script src="overlay.js"></script>
+<script src="room.js"></script>
+</body>
+</html>

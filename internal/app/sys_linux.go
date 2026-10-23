@@ -14,6 +14,8 @@ import (
 
 func platform() string { return "linux" }
 
+const isWindows = false
+
 func autostartFile() string {
 	dir, err := os.UserConfigDir()
 	if err != nil {

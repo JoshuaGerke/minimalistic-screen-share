@@ -6,7 +6,6 @@
 #                                 aus dem Quelltext, Go vorausgesetzt)
 #   ./install.sh --from-github    lädt die neueste Version von GitHub
 #   ./install.sh --autostart      zusätzlich beim Anmelden starten
-#   ./install.sh --relay          Relay als systemd-User-Dienst einrichten
 #
 # Deinstallieren: uninstall.sh
 
@@ -16,11 +15,9 @@ REPO="JoshuaGerke/minimalistic-screen-share"
 BIN_DIR="${HOME}/.local/bin"
 APP_DIR="${HOME}/.local/share/applications"
 AUTO_DIR="${HOME}/.config/autostart"
-UNIT_DIR="${HOME}/.config/systemd/user"
 
 FROM_GITHUB=0
 AUTOSTART=0
-WITH_RELAY=0
 SOURCE=""
 
 usage() {
@@ -30,7 +27,6 @@ install.sh – Minimalistic Screen Share installieren
 Optionen:
   --from-github   neueste Version von GitHub laden statt lokal zu installieren
   --autostart     beim Anmelden automatisch starten
-  --relay         Relay als systemd-User-Dienst einrichten (Port 8080)
   --source DIR    Binaries aus DIR nehmen
   --bin-dir DIR   Zielordner (Standard: ~/.local/bin)
   -h, --help      diese Hilfe
@@ -41,7 +37,6 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		--from-github) FROM_GITHUB=1; shift ;;
 		--autostart)   AUTOSTART=1; shift ;;
-		--relay)       WITH_RELAY=1; shift ;;
 		--source)      SOURCE="${2:?--source braucht einen Ordner}"; shift 2 ;;
 		--bin-dir)     BIN_DIR="${2:?--bin-dir braucht einen Ordner}"; shift 2 ;;
 		-h|--help)     usage; exit 0 ;;
@@ -78,8 +73,6 @@ if [ -z "$SOURCE" ] && [ "$FROM_GITHUB" -eq 0 ] && [ -f "$SCRIPT_DIR/go.mod" ]; 
 	schritt "Baue aus dem Quelltext"
 	mkdir -p "$SCRIPT_DIR/bin"
 	(cd "$SCRIPT_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/mss-share ./cmd/share)
-	(cd "$SCRIPT_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/mss-relay ./cmd/relay)
-	(cd "$SCRIPT_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/mss-viewer ./cmd/viewer)
 	SOURCE="$SCRIPT_DIR/bin"
 fi
 
@@ -117,7 +110,7 @@ fi
 
 schritt "Installiere nach $BIN_DIR"
 mkdir -p "$BIN_DIR" "$APP_DIR"
-for b in mss-share mss-relay mss-viewer; do
+for b in mss-share; do
 	if [ -f "$SOURCE/$b" ]; then
 		install -m755 "$SOURCE/$b" "$BIN_DIR/$b"
 	fi
@@ -136,7 +129,7 @@ Type=Application
 Name=Minimalistic Screen Share
 GenericName=Screensharing
 Comment=Bildschirm und Ton teilen wie in Discord
-Exec=$BIN_DIR/mss-share --settings
+Exec=$BIN_DIR/mss-share
 Icon=video-display
 Terminal=false
 Categories=Network;AudioVideo;Utility;
@@ -169,34 +162,6 @@ X-GNOME-Autostart-enabled=true
 EOF
 fi
 
-# --- Relay als Dienst -------------------------------------------------------
-
-if [ "$WITH_RELAY" -eq 1 ]; then
-	if command -v systemctl >/dev/null 2>&1; then
-		schritt "Richte Relay als systemd-User-Dienst ein (Port 8080)"
-		mkdir -p "$UNIT_DIR"
-		cat > "$UNIT_DIR/mss-relay.service" <<EOF
-[Unit]
-Description=minimalistic screen share Relay
-Documentation=https://github.com/$REPO
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-ExecStart=$BIN_DIR/mss-relay -addr :8080
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-EOF
-		systemctl --user daemon-reload
-		systemctl --user enable --now mss-relay.service
-	else
-		echo "systemctl fehlt – Relay-Dienst übersprungen."
-	fi
-fi
-
 # --- Hinweise ---------------------------------------------------------------
 
 case ":${PATH}:" in
@@ -216,7 +181,7 @@ if ! command -v parec >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "Fertig. Start: mss-share --settings (oder aus dem Anwendungsmenü)."
+echo "Fertig. Start: mss-share (oder aus dem Anwendungsmenü)."
 echo "Deinstallieren: uninstall.sh"
 
 if [ "$was_running" -eq 1 ]; then

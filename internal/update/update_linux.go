@@ -20,7 +20,7 @@ func assetMatches(name string) bool {
 	return strings.HasSuffix(name, "_linux_"+runtime.GOARCH+".tar.gz")
 }
 
-// apply tauscht mss-share, mss-relay und mss-viewer an Ort und Stelle aus.
+// apply tauscht mss-share an Ort und Stelle aus (ältere Pakete hatten noch mss-relay und mss-viewer).
 // Unter Linux darf man ein laufendes Programm ersetzen – es läuft mit der
 // alten Datei weiter, bis es neu startet.
 func apply(url string, logg *log.Logger, quiet bool) (bool, error) {

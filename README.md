@@ -1,72 +1,32 @@
 # minimalistic-screen-share
 
-Bildschirm und Systemton teilen, so einfach wie AnyDesk, nur ohne Fernsteuerung: exe doppelklicken, „Teilen starten“, Link in den Chat. Zuschauer brauchen nur einen Browser. Gebaut für Co-Working: läuft still im Infobereich, ist ein paar MB groß und lässt sich jederzeit pausieren.
+Ein kleines Programm für Räume: Raum-ID und Passwort eingeben, drin. Im Raum sprecht ihr miteinander, teilt eure Bildschirme, schreibt im Chat und schickt euch Dateien. Alles ist Ende-zu-Ende verschlüsselt, ein Konto oder einen Server braucht es nicht. Gebaut fürs Co-Working: läuft still im Infobereich und braucht kaum Leistung.
 
 **Schnellstart:** [GUIDE.md](GUIDE.md)
 
-## Warum
-
-Discord kann Screensharing, aber 1080p gibt es nur mit Nitro, unter Linux ist Systemton unter Wayland ein Glücksspiel, und die App zieht ein paar hundert MB RAM. AnyDesk & Co. wollen Fernsteuerung und Konten. Ich wollte was, das im Infobereich sitzt, auf Windows und Arch (auch Omarchy/Hyprland) einfach läuft und nur eins macht: Bild und Ton teilen, Link schicken, fertig.
-
 ## Was es kann
 
-- **Ein Klick, ein Link**: „Teilen starten“ legt den Link direkt in die Zwischenablage. Er funktioniert überall – die App bringt ihren eigenen Server mit und stellt ihn über einen kostenlosen Cloudflare-Tunnel ins Netz. Kein Konto, kein Router, keine Ports.
-- **Installation per Doppelklick**: eine exe, installiert sich selbst ohne Admin-Rechte. Update = neue exe doppelklicken.
-- **Anklopfen wie bei Discord**: Wer zuschauen will, klopft an, du klickst „Reinlassen“. Wer einmal drin war, kommt den ganzen Tag ohne neues Anklopfen wieder rein. Auf Wunsch alle sofort reinlassen.
-- **Bildschirm, Monitor oder einzelnes Fenster**, Quelle wechselbar mitten im Stream
-- **Pause-Knopf** für private Momente – Zuschauer sehen „Pausiert“, die Verbindung bleibt
-- **Video wie bei Discord/OBS**: Aufnahme und H.264-Encoding auf der Grafikkarte (Windows: Desktop Duplication + NVENC/AMF/QuickSync, Linux: wf-recorder + VAAPI), Hardware-Decoding im Browser per WebCodecs. 1440p mit 60 fps bei ~3 % eines CPU-Kerns.
-- **Alle Einstellungen live**: Bildrate (5–60), Datenrate, Mauszeiger, Ton – ohne Neustart. Vier Voreinstellungen von „Sparsam“ bis „Flüssig“.
-- **Ton ohne Knacken**: Ringpuffer mit durchgehender Umrechnung im AudioWorklet, passt sich an Netzschwankungen und Taktunterschiede der Soundkarten an. Bei engem Upload gehen Bilder verloren, nie der Ton.
-- **Rückkopplungsschutz**: Schaut man auf dem PC zu, der gerade streamt, bleibt der Viewer automatisch stumm.
-- **Sprachkanal wie Discord**: Opus in hoher Bitrate (bis 510 kbit/s, Stereo), Echo- und Rauschunterdrückung, automatische Lautstärke, Sprachaktivierung mit Pegelanzeige oder Push-to-Talk, stumm/taub, Lautstärke pro Person. Läuft im Browser (WebRTC-Audioverarbeitung + WebCodecs) über den Relay des Streams.
-- **Overlay**: schwebende Teilnehmerliste mit Sprech-Anzeige über allen Fenstern – unter Windows ein echtes halbtransparentes Fenster (verschiebbar, Deckkraft, Größe, Klicks durchlassen), sonst Bild-in-Bild des Browsers.
-- **Konferenz**: Jeder, der drin ist, teilt seinen Bildschirm dazu (über die eigene App, mit Hardware-Encoder); alle Bildschirme groß/als Kacheln, Gastgeber-Ansicht, „Immer reinlassen“.
-- **Zeigen per 5-fach-Klick**: Markierung beim Streamer an der angeklickten Stelle (optional, gedrosselt).
-- **Feste Sitzungs-ID** wie bei AnyDesk: Die aktuelle Adresse wird über ntfy.sh unter der ID veröffentlicht – Beitreten per ID, auch nach Neustarts.
-- **Automatisch verbunden** beim Start: teilen, Konferenz beitreten, dort teilen, Sprachkanal (stumm) – im eigenen Konferenz-Fenster.
-- **Diagnosemodus**: Leistungsdaten (CPU je Prozess, GPU-Auslastung, Systemlast, Stream-Werte) alle 2 s ins Log – zum Aufspüren von Rucklern.
-- **Viewer** mit Lautstärke, Bild-in-Bild (schwebt über anderen Fenstern), Vollbild, Originalgröße 1:1, Verbindungsdaten und Tastenkürzeln. Hört der Streamer auf, verbindet sich der Viewer von selbst wieder, sobald er weitermacht.
-- **Pausiert automatisch, wenn niemand zuschaut** – spart CPU und Traffic. Unveränderte Bilder werden gar nicht erst verschickt.
-- **Ein Programm nicht mitstreamen** (z. B. Discord) – unter Windows hörst du es trotzdem weiter (Prozess-Loopback), unter Linux wird es beim Teilen stummgeschaltet. Autostart per Schalter.
-- Läuft als Tray-App (Windows: Infobereich, Linux: StatusNotifier für waybar & Co.)
-
-## Wie es aussieht
-
-Tray-Menü:
-
-```
-Bildschirm teilen
-Fenster teilen ▸     Chrome, Steam, Terminal, …
-Monitor teilen ▸     Alle Monitore, Monitor 1 (1920×1080), …
-Pausieren
-Teilen beenden
-─────────────────────────
-Status: Live – 2 Zuschauer
-Link kopieren
-Eigenen Stream ansehen
-─────────────────────────
-Öffnen…
-Sitzungs-ID: joshua-4f2a
-Beenden
-```
-
-Das Fenster (öffnet sich im Browser): oben die Quellen als Kacheln und der große „Teilen starten“-Knopf, darunter dein Link mit Kopieren-Knopf, Anfragen erscheinen ganz oben gelb umrandet. Die Einstellungen speichern sich selbst.
-
-Der Viewer: Das Bild füllt das ganze Fenster, die Leiste oben blendet sich aus, wenn die Maus ruht.
+- **Räume statt Links:** Raum-ID und Passwort ausmachen, jeder gibt beides ein. Gibt es den Raum noch nicht, legt ihn der Erste damit an.
+- **Ende-zu-Ende verschlüsselt:** Aus Raum-ID und Passwort entsteht auf jedem PC derselbe Schlüssel (PBKDF2, 310 000 Runden). Bild, Systemton, Stimme, Chat, Dateien, Zeige-Klicks und Namen gehen nur mit AES-256-GCM verschlüsselt raus. Wer den Raum weiterleitet, sieht nur Größe und Art der Pakete, aber keinen Inhalt.
+- **Kein Server nötig:** Wer zuerst da ist, betreibt den Raum in seiner App und macht ihn über einen kostenlosen Cloudflare-Tunnel erreichbar. Geht er, übernimmt nach ein paar Sekunden automatisch ein anderer. Gefunden wird der Raum über ntfy.sh, dort steht nur die Tunnel-Adresse unter einem Hash der Raum-ID.
+- **Sprachkanal wie bei Discord:** Opus bis 510 kbit/s in Stereo, Echo- und Rauschunterdrückung, automatische Lautstärke, Sprachaktivierung mit Pegel oder Push-to-Talk, stumm/taub, Lautstärke für jede Person.
+- **Bildschirm teilen, alle gleichzeitig:** Aufnahme und H.264 laufen auf der Grafikkarte (Windows: Desktop Duplication + NVENC/AMF/QuickSync, Linux: wf-recorder + VAAPI). Dekodiert wird im Fenster per WebCodecs. 1440p mit 60 fps kostet ein paar Prozent eines Kerns. Auf Wunsch teilst du den Systemton mit, ohne die Stimmen aus dem Raum.
+- **Chat und Dateien:** Nachrichten, Links und Bilder aus der Zwischenablage. Dateien bis 2 GB schickst du per Büroklammer oder ziehst sie ins Fenster.
+- **Zeigen per 5-fach-Klick:** Wer 5× schnell auf deinen Bildschirm klickt, lässt bei dir an der Stelle einen Ring erscheinen. Das lässt sich abschalten.
+- **Overlay:** schwebende Teilnehmerliste, die anzeigt, wer gerade spricht. Unter Windows ist das ein echtes halbtransparentes Fenster.
+- **Beim Start automatisch** in einen gemerkten Raum, in den Sprachkanal (auf Wunsch stumm) und den Bildschirm teilen.
+- **Rückkopplungsschutz:** Dein eigener Bildschirm und Ton werden bei dir nie abgespielt. Unter Windows nimmt die Aufnahme die App samt Fenster aus, die Stimmen der anderen landen also nicht im geteilten Ton.
+- **Diagnosemodus**, der alle 2 s Leistungsdaten ins Log schreibt, und **Update per Knopf**.
 
 ## Installation
 
 ### Windows
 
-[`MinimalisticScreenShare.exe`](https://github.com/JoshuaGerke/minimalistic-screen-share/releases/latest/download/MinimalisticScreenShare.exe) herunterladen und doppelklicken. Die exe kopiert sich nach `%LOCALAPPDATA%\Programs\minimalistic-screen-share`, legt einen Startmenü-Eintrag und einen Eintrag unter „Apps“ an und startet von dort. Kein Admin, keine Dienste.
+[`MinimalisticScreenShare.exe`](https://github.com/JoshuaGerke/minimalistic-screen-share/releases/latest/download/MinimalisticScreenShare.exe) herunterladen und doppelklicken. Die exe installiert sich ohne Admin-Rechte nach `%LOCALAPPDATA%\Programs\minimalistic-screen-share`, legt einen Startmenü-Eintrag an und öffnet das Fenster. Das Fenster läuft als App-Fenster von Edge, das bei Windows dabei ist.
 
-- **Update:** neue exe doppelklicken – die laufende Version wird beendet und ersetzt.
-- **Entfernen:** Einstellungen → Apps → Minimalistic Screen Share (oder `mss-share --uninstall`). Die Einstellungen bleiben unter `%APPDATA%\minimalistic-screen-share` liegen.
-- **Ohne Installation:** `mss-share.exe --portable`
-- SmartScreen meckert beim ersten Start („Weitere Informationen → Trotzdem ausführen“), weil die exe nicht kostenpflichtig signiert ist.
-
-Für Skript-Fans geht weiterhin `irm https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.ps1 | iex` (installiert zusätzlich `mss-relay` und `mss-viewer` in den PATH).
+- **Update:** Einstellungen → „Auf … aktualisieren“, oder die neue exe doppelklicken.
+- **Entfernen:** Einstellungen → Apps → Minimalistic Screen Share (oder `mss-share --uninstall`).
+- SmartScreen warnt beim ersten Start („Weitere Informationen → Trotzdem ausführen“), weil die exe nicht kostenpflichtig signiert ist.
 
 ### Linux
 
@@ -74,94 +34,62 @@ Für Skript-Fans geht weiterhin `irm https://raw.githubusercontent.com/JoshuaGer
 curl -fsSL https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.sh | bash
 ```
 
-Der Installer legt die Binaries nach `~/.local/bin` und einen Eintrag ins Anwendungsmenü. Extras: `--autostart`, `--relay` (Relay als systemd-User-Dienst auf Port 8080), `--from-github`, `--bin-dir`. Deinstallieren: `uninstall.sh` (`--purge` löscht auch die Einstellungen).
+Das legt `mss-share` nach `~/.local/bin` und einen Eintrag ins Anwendungsmenü. Das Fenster braucht Chromium, Brave, Chrome oder Edge. Extras: `--autostart`, `--from-github`, `--bin-dir`. Deinstallieren mit `uninstall.sh` (`--purge` löscht auch die Einstellungen).
 
 | Paket   | Wofür |
 |---------|-------|
+| `wf-recorder` | H.264-Video über die Grafikkarte |
 | `grim`  | Aufnahme unter Wayland (Hyprland/Sway, …) |
-| `libpulse` | Ton über `parec` (Monitor der Standard-Senke) |
-| `wl-clipboard` | Link automatisch in die Zwischenablage (X11: `xclip`) |
-| `wf-recorder` | flüssiges H.264-Video über die Grafikkarte (sonst Einzelbilder) |
-| `slurp` | optional: Bereich mit der Maus auswählen |
-| `waybar` o. ä. | irgendein Tray-Host, der StatusNotifier versteht |
+| `libpulse` | Systemton über `parec` |
+| `waybar` o. ä. | ein Tray-Host, der StatusNotifier versteht |
 
-Fensteraufnahme läuft unter Hyprland über `hyprctl`. Unter X11 klappt die Aufnahme ohne Extra-Pakete. Autostart unter Hyprland ohne uwsm: `exec-once = mss-share --background`.
-
-### Arch Linux / Omarchy
-
-```bash
-cd packaging
-makepkg -si
-mss-share --settings
-```
+Autostart unter Hyprland ohne uwsm: `exec-once = mss-share --background`.
 
 ### Aus dem Quelltext
 
 ```bash
-make            # baut bin/mss-share, bin/mss-relay, bin/mss-viewer für das laufende System
-make windows    # oder: Cross-Build für Windows
+make            # bin/mss-share für das laufende System
+make windows    # Cross-Build für Windows
 ```
 
-Unter Windows: `.\build.ps1` baut `bin\mss-share.exe` als reine GUI-Anwendung; Logs landen in `%APPDATA%\minimalistic-screen-share\share.log`. Builds aus dem Repo installieren sich nicht selbst.
+Unter Windows baut `.\build.ps1` die GUI-Version. Die Logs landen in `%APPDATA%\minimalistic-screen-share\share.log`.
 
-## Verbindung
+## Erreichbarkeit
 
-Im Fenster unter **Einstellungen → Verbindung**:
+Wenn dein PC den Raum betreibt, steht unter **Einstellungen → Allgemein**:
 
-- **Überall (Standard):** eingebauter Relay plus Cloudflare-Quick-Tunnel. Beim ersten Start wird `cloudflared` einmalig geladen (~40 MB). Der Link gilt, solange die App läuft; bricht der Tunnel weg, baut die App ihn selbst neu auf und legt den neuen Link in die Zwischenablage.
-- **Nur im selben Netzwerk:** eingebauter Relay, Link zeigt auf die LAN-Adresse. Unter Linux mit Firewall muss dafür Port 8080 eingehend offen sein (`sudo ufw allow 8080/tcp`).
-- **Eigener Server:** siehe unten.
-
-### Eigener Server
-
-Für einen festen Link auf einem VPS: `mss-relay` laufen lassen (systemd-Unit in `packaging/mss-relay.service`) und einen Reverse Proxy davorhängen:
-
-```
-# Caddy
-share.example.com {
-    reverse_proxy 127.0.0.1:8080
-}
-```
-
-Im Fenster dann **Eigener Server** wählen und `https://share.example.com` eintragen. Der Relay ist absichtlich dumm: Er kennt Räume, schickt Daten weiter und hat keine Datenbank. Wer die Sitzungs-ID kennt, kann anklopfen – zuschauen darf nur, wen du reinlässt.
+- **Überall (Standard):** eingebauter Relay hinter einem Cloudflare-Quick-Tunnel. `cloudflared` wird beim ersten Mal einmalig geladen (~40 MB). Der Relay lauscht dabei nur auf 127.0.0.1, die Firewall fragt also nicht nach.
+- **Nur im eigenen Netzwerk:** Der Relay lauscht im LAN auf Port 8080–8090, ganz ohne Internet-Dienste außer ntfy fürs Finden.
 
 ## Kommandozeile
 
 ```bash
-mss-share                          # Tray-App (Standard)
-mss-share --settings               # Fenster öffnen (startet die App bei Bedarf)
-mss-share --background             # still starten, kein Fenster (Autostart)
-mss-share --stream                 # ohne Tray direkt losstreamen, Link steht im Log, Strg+C beendet
-mss-share --stream --test-pattern  # mit Testbild statt Bildschirm
-mss-share --snapshot bild.jpg      # ein einzelnes Bild aufnehmen
-mss-share --list-windows           # Fenster auflisten
-mss-share --list-monitors          # Monitore auflisten
-mss-share --uninstall              # App entfernen (Windows)
-```
-
-Weitere Schalter: `--server`, `--room`, `--fps`, `--quality`, `--width`, `--window`, `--monitor`, `--region x,y,w,h`, `--no-audio`, `--portable`, `--debug`.
-
-Zum Gegenprüfen ohne Browser (klopft an wie jeder Zuschauer):
-
-```bash
-mss-viewer --server http://localhost:8080 --room deine-sitzungs-id --name Max --save latest.jpg
+mss-share                  # App mit Fenster
+mss-share --background     # still starten (Autostart)
+mss-share --update         # auf die neueste Version aktualisieren
+mss-share --diag           # Diagnosemodus
+mss-share --list-monitors  # Monitore auflisten
+mss-share --list-windows   # Fenster auflisten
+mss-share --portable       # ohne Installation aus diesem Ordner
+mss-share --debug          # Log auf die Konsole
+mss-share --uninstall      # App entfernen
 ```
 
 ## Technik in drei Sätzen
 
-Aufnahme und Ton werden im Client zu JPEG-Bildern und rohem PCM verpackt und über einen WebSocket zum Relay geschoben; eine eigene Schreibschleife schickt Ton immer zuerst, Bilder in 32-KB-Stücken dazwischen, und vom Bild zählt nur das neueste. Der Relay verteilt alles an freigegebene Zuschauer und reicht später Dazukommenden die Stream-Beschreibung (Tonrate, Pause) nach. Im Browser malt ein Canvas die Bilder, und ein AudioWorklet spielt den Ton aus einem selbstregelnden Ringpuffer.
+Die App leitet aus Raum-ID und Passwort einen Verschlüsselungs- und einen Anmeldeschlüssel ab. Der Relay speichert vom Anmeldeschlüssel nur den SHA-256-Wert und verteilt sonst nur verschlüsselte Pakete mit lesbarem 16-Byte-Kopf (Art, Absender, Nummer). Den eigenen Bildschirm verschlüsselt und sendet die App selbst, alles andere (Stimme, Chat, Dateien) das Fenster über WebCrypto, und beide Seiten nutzen dasselbe Paketformat (`internal/e2e`, `internal/web/dist/e2e.js`).
 
-Den Ton-Kern prüft `node internal/web/audio_core_check.cjs` ohne Browser (Taktdrift, Netz-Hänger, Knacken).
+Gegenproben ohne Browser: `node internal/web/e2e_check.cjs` (gleiches Paketformat wie Go) und `node internal/web/audio_core_check.cjs` (Ton-Puffer).
 
 ## Grenzen
 
-- Ton ist unkomprimiertes PCM: Stille kostet fast nichts, laute Musik etwa 1,5 Mbit/s. Opus wäre der nächste Schritt.
-- JPEG statt H.264: Jedes Bild ist ein Keyframe (Zuschauer haben sofort ein Bild), bei viel Bewegung kostet das aber Bandbreite. Für Videos lieber 1280 px und „Flüssig“.
-- Der Quick-Tunnel-Link ändert sich bei jedem Neustart der App. Für einen festen Link: eigener Server.
-- Fensteraufnahme unter Windows läuft über `PrintWindow`; bei manchen Spielen kommt nur Schwarz – dann wird der sichtbare Bildschirmbereich des Fensters genommen.
-- Keine Ende-zu-Ende-Verschlüsselung. Über den Tunnel ist die Verbindung per TLS geschützt, Cloudflare sieht den Inhalt aber.
-- Höchstens 16 Zuschauer pro Stream (eingebauter Relay), 20 offene Anfragen.
+- Höchstens 16 Teilnehmer pro Raum (Personen und geteilte Bildschirme zusammen).
+- Wer den Raum betreibt, schickt alles an alle. Bei vielen gleichzeitig geteilten Bildschirmen zählt sein Upload.
+- Dateien erreichen nur, wer beim Senden im Raum ist. Den Chat-Verlauf hält der Betreiber (verschlüsselt), bis der Raum umzieht.
+- Ein Passwort lässt sich nicht nachträglich ändern. Neues Passwort heißt neuer Raum, am besten mit neuer ID.
+- Wer zuerst mit einem falschen Passwort einen noch leeren Raum betritt, legt ihn mit diesem Passwort an. Die anderen sehen dann „Falsches Passwort“.
+- Unter Linux geht der Ton der anderen beim Teilen mit Systemton aus. Sonst würde er mit aufgenommen und käme bei ihnen als Echo zurück.
 
 ## Lizenz
 
-MIT – siehe [LICENSE](LICENSE).
+MIT, siehe [LICENSE](LICENSE).

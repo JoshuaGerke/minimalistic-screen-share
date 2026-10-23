@@ -1,13 +1,11 @@
 /* Sprachkanal wie bei Discord – läuft im Browser, weil nur dort Echo-
  * Unterdrückung, Rauschfilter und automatische Lautstärke (WebRTC) in guter
- * Qualität zur Verfügung stehen. Kodiert wird mit Opus über WebCodecs, die
- * Pakete laufen über den Relay des Streams.
+ * Qualität zur Verfügung stehen. Kodiert wird mit Opus über WebCodecs;
+ * Verschlüsseln und Verschicken übernimmt das Raum-Fenster (room.js).
  *
- * Paketformat: [0x06][Sprecher-ID u32][Folgenummer u32, oberstes Bit = Stereo][Opus]
- *
- * Benutzt von Viewer (app.js) und Panel (host.js):
- *   const v = MssVoice.create({ send, sendCtl, onChange });
- *   v.mount(element); v.onControl(msg); v.onPacket(arrayBuffer); v.join(); v.leave();
+ *   const v = MssVoice.create({ send(opus, stereo), onState(), onChange, canJoin, joinHint });
+ *   v.mount(element, settingsElement); v.setMembers(list, meId);
+ *   v.onPacket(id, seq, stereo, opus); v.join(); v.leave();
  * Braucht audio-core.js (Ringpuffer für die Wiedergabe). */
 (() => {
   'use strict';
@@ -88,7 +86,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
       error: '',
     };
     let ctx = null, master = null, micStream = null, micGain = null, capNode = null, encoder = null;
-    let seq = 0, encChannels = 1, hangUntil = 0, encTs = 0;
+    let encChannels = 1, hangUntil = 0, encTs = 0;
     const peers = new Map(); // id -> { dec, node, gain, ch, lastPkt, level }
     let root = null, changeTimer = null;
     let silent = false; // lautloser Test: Wiedergabe bleibt hart auf 0
@@ -147,12 +145,9 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
     function startEncoder() {
       encoder = new AudioEncoder({
         output: (chunk) => {
-          const pkt = new Uint8Array(9 + chunk.byteLength);
-          const dv = new DataView(pkt.buffer);
-          pkt[0] = 6;
-          dv.setUint32(5, (seq++ & 0x7fffffff) | (encChannels === 2 ? 0x80000000 : 0), true);
-          chunk.copyTo(pkt.subarray(9));
-          opts.send(pkt.buffer);
+          const data = new Uint8Array(chunk.byteLength);
+          chunk.copyTo(data);
+          opts.send(data, encChannels === 2);
         },
         error: (e) => { st.error = 'Opus: ' + e.message; changed(); },
       });
@@ -228,31 +223,27 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
       p.gain.gain.value = (v === undefined ? 100 : v) / 100;
     }
 
-    function onPacket(buf) {
+    function onPacket(id, seq, stereo, data) {
       if (!st.joined || !ctx || st.deaf) return;
-      const dv = new DataView(buf);
-      const id = dv.getUint32(1, true);
-      const s = dv.getUint32(5, true);
-      const p = peer(id, (s & 0x80000000) ? 2 : 1);
+      const p = peer(id, stereo ? 2 : 1);
       p.lastPkt = performance.now();
-      p.bytes += buf.byteLength;
+      p.bytes += data.byteLength;
       if (p.dec.state !== 'configured') return;
-      p.dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: (s & 0x7fffffff) * 20000, data: new Uint8Array(buf, 9) }));
+      p.dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: seq * 20000, data }));
     }
 
     /* ---------- Steuerung ---------- */
 
-    function onControl(m) {
-      if (m.t === 'voice') {
-        st.members = (m.members || []).map((x) => ({ ...x }));
-        for (const id of [...peers.keys()]) if (!st.members.some((x) => x.id === id)) dropPeer(id);
-        for (const [, p] of peers) applyPeerVolume(p);
-        changed();
-      } else if (m.t === 'voice-you') {
-        st.me = m.id;
-        changed();
-      }
+    // setMembers: wer ist im Sprachkanal ({ id, name, muted, deaf }), wer bin ich?
+    function setMembers(list, me) {
+      const old = new Map(st.members.map((m) => [m.id, m]));
+      st.members = list.map((x) => ({ ...x, speaking: old.has(x.id) ? old.get(x.id).speaking : false }));
+      st.me = me;
+      for (const id of [...peers.keys()]) if (!st.members.some((x) => x.id === id)) dropPeer(id);
+      for (const [, p] of peers) applyPeerVolume(p);
+      changed();
     }
+    const announce = () => opts.onState && opts.onState();
 
     async function join() {
       if (st.joined || st.joining) return;
@@ -263,8 +254,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
         await ctx.resume();
         await startMic();
         st.joined = true;
-        opts.sendCtl({ t: 'voice-join', on: true });
-        opts.sendCtl({ t: 'voice-state', on: st.muted, deaf: st.deaf });
+        announce();
         listDevices();
       } catch (e) {
         st.error = e.name === 'NotAllowedError' ? 'Mikrofon wurde nicht erlaubt – im Browser freigeben.' : 'Mikrofon: ' + e.message;
@@ -276,19 +266,19 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
 
     function leave() {
       if (!st.joined) return;
-      opts.sendCtl({ t: 'voice-join', on: false });
-      st.joined = false; st.transmitting = false; st.members = []; st.me = 0;
+      st.joined = false; st.transmitting = false;
+      announce();
       stopMic();
       for (const id of [...peers.keys()]) dropPeer(id);
       changed();
     }
 
-    function setMuted(v) { st.muted = v; if (st.joined) opts.sendCtl({ t: 'voice-state', on: st.muted, deaf: st.deaf }); changed(); }
+    function setMuted(v) { st.muted = v; announce(); changed(); }
     function setDeaf(v) {
       st.deaf = v;
       if (v) st.muted = true;
       applyOutput();
-      if (st.joined) opts.sendCtl({ t: 'voice-state', on: st.muted, deaf: st.deaf });
+      announce();
       changed();
     }
 
@@ -373,7 +363,8 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
 
     const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
-    function mount(container) {
+    let setRoot = null;
+    function mount(container, settingsEl) {
       root = container;
       root.classList.add('voice');
       root.innerHTML = `
@@ -418,9 +409,13 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
             <label class="switch"><input type="checkbox" data-ov="clickThrough"><span class="label"><b>Klicks durchlassen</b><span>Overlay lässt sich dann nicht mehr verschieben</span></span></label>
           </div>
         </div>`;
-      root.addEventListener('click', onClick);
-      root.addEventListener('input', onInput);
-      root.addEventListener('change', onInput);
+      setRoot = settingsEl || root;
+      if (settingsEl) { const vs = root.querySelector('.voice-settings'); vs.classList.remove('hidden'); settingsEl.append(vs); }
+      for (const r of new Set([root, setRoot])) {
+        r.addEventListener('click', onClick);
+        r.addEventListener('input', onInput);
+        r.addEventListener('change', onInput);
+      }
       render();
     }
 
@@ -432,7 +427,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
         case 'join': st.joined ? leave() : join(); break;
         case 'mute': setMuted(!st.muted); break;
         case 'deaf': setDeaf(!st.deaf); break;
-        case 'settings': root.querySelector('.voice-settings').classList.toggle('hidden'); listDevices(); break;
+        case 'settings': opts.onSettings ? opts.onSettings() : setRoot.querySelector('.voice-settings').classList.toggle('hidden'); listDevices(); break;
         case 'overlay': opts.onOverlay && opts.onOverlay(api); break;
         case 'testout': testOutput(); break;
         case 'pttkey':
@@ -478,11 +473,11 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
 
     function renderMeter() {
       const pct = (db) => Math.max(0, Math.min(100, (db + 80) / 70 * 100));
-      const lvl = root.querySelector('.meter-level');
+      const lvl = setRoot.querySelector('.meter-level');
       if (!lvl) return;
       lvl.style.width = pct(st.inputDb) + '%';
       lvl.classList.toggle('open', st.transmitting);
-      root.querySelector('.meter-thr').style.left = pct(settings.threshold) + '%';
+      setRoot.querySelector('.meter-thr').style.left = pct(settings.threshold) + '%';
     }
 
     function fillSelect(sel, list, value, fallback) {
@@ -498,7 +493,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
 
     function render() {
       if (!root) return;
-      const q = (s) => root.querySelector(s);
+      const q = (s) => root.querySelector(s) || setRoot.querySelector(s);
       const join = q('[data-act=join]');
       join.textContent = st.joining ? 'Verbinde…' : (st.joined ? 'Verlassen' : 'Sprachkanal beitreten');
       join.className = 'btn ' + (st.joined ? 'danger' : 'primary');
@@ -556,7 +551,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
     }
 
     const api = {
-      mount, join, leave, onControl, onPacket, setMuted, setDeaf,
+      mount, join, leave, setMembers, onPacket, listDevices, setMuted, setDeaf,
       get state() { return st; },
       get settings() { return settings; },
       // Für das Overlay: wer ist da, wer spricht gerade?
@@ -581,7 +576,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
         src.connect(micGain).connect(capNode);
         startEncoder();
         st.joined = true;
-        opts.sendCtl({ t: 'voice-join', on: true });
+        announce();
         return ctx;
       },
       _peers: peers,

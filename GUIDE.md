@@ -2,146 +2,51 @@
 
 ## 1. Installieren
 
-**Windows:** [`MinimalisticScreenShare.exe`](https://github.com/JoshuaGerke/minimalistic-screen-share/releases/latest/download/MinimalisticScreenShare.exe) herunterladen und doppelklicken. Fertig – die App installiert sich selbst (ohne Admin), legt einen Startmenü-Eintrag an und öffnet ihr Fenster. Das Symbol sitzt danach im Infobereich (Windows 11: hinter dem Pfeil `^`).
+**Windows:** [`MinimalisticScreenShare.exe`](https://github.com/JoshuaGerke/minimalistic-screen-share/releases/latest/download/MinimalisticScreenShare.exe) herunterladen und doppelklicken. Die App installiert sich selbst ohne Admin-Rechte und öffnet ihr Fenster. Das Symbol sitzt danach im Infobereich (Windows 11: hinter dem Pfeil `^`).
 
-> Windows zeigt beim ersten Start evtl. „Der Computer wurde durch Windows geschützt“ – auf **Weitere Informationen → Trotzdem ausführen** klicken. Das kommt bei jeder Software ohne kostenpflichtiges Signatur-Zertifikat.
+> Zeigt Windows beim ersten Start „Der Computer wurde durch Windows geschützt“, auf **Weitere Informationen → Trotzdem ausführen** klicken.
 
 **Arch/Omarchy:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JoshuaGerke/minimalistic-screen-share/main/install.sh | bash
-sudo pacman -S wf-recorder grim slurp libpulse wl-clipboard   # Video, Bild, Ton, Link kopieren
-mss-share --settings
+sudo pacman -S wf-recorder grim libpulse
+mss-share
 ```
 
-**Updates:** Die App schaut selbst nach neuen Versionen. Gibt es eine, steht oben im Fenster **„Version … ist da“** – auf **Jetzt aktualisieren** klicken, ein paar Sekunden warten, fertig. Alternativ im Startmenü bzw. Anwendungsmenü **„Minimalistic Screen Share aktualisieren“** starten, oder im Terminal `mss-share --update`.
+**Updates:** In den Einstellungen erscheint „Auf … aktualisieren“, sobald es eine neue Version gibt. Ein Klick genügt. Alternativ im Terminal: `mss-share --update`.
 
-## 2. Teilen
+## 2. Raum betreten
 
-1. Im Fenster auswählen, was du teilen willst (Bildschirm, Monitor, Fenster) – oder Rechtsklick aufs Symbol → **Bildschirm teilen**
-2. **Teilen starten** – der Link ist jetzt in deiner Zwischenablage
-3. Im Chat einfügen (Strg+V) und abschicken
+1. Namen eingeben.
+2. **Raum-ID** ausdenken (oder auf „zufällig“ klicken) und ein **Passwort** mit mindestens 6 Zeichen.
+3. **Betreten.** Gibt es den Raum noch nicht, hast du ihn damit angelegt.
 
-Wer den Link öffnet, tippt seinen Namen ein und klopft an. Du bekommst eine Meldung und klickst **Reinlassen**. Wer einmal drin war, kommt den ganzen Tag ohne neues Anklopfen wieder rein – auch wenn du zwischendurch aufhörst und neu startest.
+Den anderen sagst du die Raum-ID und das Passwort, das Passwort am besten mündlich oder über einen anderen Weg als die ID. Mit **Raum merken** steht er nächstes Mal mit einem Klick bereit. Gespeichert wird dabei nur der abgeleitete Schlüssel, nicht das Passwort.
 
-Im festen Team: **Alle sofort reinlassen** einschalten, dann entfällt das Anklopfen.
+Das Schloss mit **E2E** oben zeigt: Alles im Raum ist Ende-zu-Ende verschlüsselt.
 
-## 3. Zuschauen
+## 3. Im Raum
 
-Link öffnen, Namen eingeben, **Zuschauen**. Mehr braucht es nicht – kein Programm, kein Konto, nur der Browser.
+- **Sprechen:** rechts „Sprachkanal beitreten“. Mit `Strg+Umschalt+M` schaltest du stumm, mit `Strg+Umschalt+D` taub. Ein Klick auf eine Person öffnet ihren Lautstärkeregler.
+- **Bildschirm teilen:** unten links, dann Hauptbildschirm, Monitor oder Fenster wählen, wahlweise mit Systemton. „Quelle wechseln“ und „Pausieren“ gehen jederzeit.
+- **Zuschauen:** Teilt jemand, erscheint sein Bildschirm groß. Teilen mehrere, liegen die anderen als Kacheln darunter, ein Klick macht sie groß. Doppelklick oder `F11` schaltet auf Vollbild.
+- **Zeigen:** 5× schnell auf dieselbe Stelle im Bild klicken, dann sieht der andere dort einen Ring.
+- **Chat:** unten rechts. Dateien schickst du über die Büroklammer oder ziehst sie einfach ins Fenster. Bilder aus der Zwischenablage gehen mit `Strg+V`.
+- **Overlay:** „Overlay“ im Sprachkanal blendet eine schwebende Liste ein, die zeigt, wer gerade spricht. Deckkraft und Größe stellst du unter Einstellungen → Sprache ein.
 
-- **Bild-in-Bild** (Taste `P`): Der Stream schwebt klein über deinen anderen Fenstern – ideal fürs Co-Working
-- **Lautstärke** oben rechts, `M` schaltet stumm, `↑`/`↓` regeln
-- `F` Vollbild, `O` Originalgröße (1:1, für kleinen Text), `I` Verbindungsdaten
-- Hört der andere auf zu teilen, einfach offen lassen: Sobald er wieder startet, bist du automatisch wieder dabei
+## 4. Immer verbunden (Co-Working)
 
-## Konferenz: alle teilen gleichzeitig
+Unter **Einstellungen → Allgemein**:
 
-Einer startet das Teilen – das ist die Konferenz. Alle anderen treten bei und können ihren eigenen Bildschirm dazuteilen:
+- **Beim Anmelden starten** einschalten.
+- **Beim Start automatisch betreten:** den gemerkten Raum wählen, dazu „Sprachkanal beitreten“, „…mit stummem Mikrofon“ und/oder „Bildschirm teilen“.
 
-- **Beitreten:** In der App unter **Konferenz beitreten** die Sitzungs-ID (oder den Link) des anderen eingeben → **Beitreten**. Die Konferenz öffnet sich in einem eigenen Fenster. Die ID reicht: Die App findet die aktuelle Adresse selbst, auch wenn der andere neu gestartet hat.
-- **Mitteilen:** Im Konferenz-Fenster oben **Bildschirm teilen**. Deine App fragt kurz nach (im eigenen Fenster, mit Auswahl von Monitor oder Fenster) und streamt dann mit voller Grafikkarten-Leistung.
-- **Ansehen:** Ein Bildschirm ist groß, die anderen liegen als Kacheln unten – anklicken holt sie nach vorn. Der Ton spielt vom großen Bildschirm.
-- **Gastgeber:** Im eigenen Fenster auf **Konferenz öffnen** – dort siehst du alle anderen und den Sprachkanal (dein eigenes Bild bekommst du nicht zurück).
+Ab dann seid ihr nach dem Hochfahren automatisch im Raum und hört euch, sobald jemand das Mikrofon anmacht.
 
-**Immer reinlassen:** Bei einer Anfrage gibt es neben „Reinlassen“ den Knopf **Immer reinlassen**. Die Person kommt dann künftig ohne Nachfrage rein, auch nach Neustarts. Die Liste steht unter Einstellungen → Zugang und lässt sich dort wieder leeren.
+## Wenn etwas hakt
 
-### Zeigen per Mausklick
-
-Wer zuschaut, klickt **fünfmal schnell auf dieselbe Stelle** im großen Bild – beim Streamer erscheint genau dort ein pulsierender Ring mit dem Namen (Windows) bzw. springt der Mauszeiger dorthin (Linux/Hyprland). Einzelne Klicks tun nichts, und mehr als ein Zeiger pro Sekunde geht nicht durch – es nervt also nicht. Jeder Streamer schaltet das unter **Einstellungen → Zugang → Zeigen erlauben** selbst frei.
-
-### Automatisch verbunden beim Hochfahren
-
-Unter **Einstellungen → Beim Start**:
-
-- **Bildschirm automatisch teilen** – dein Link und dein Bild sind sofort da
-- **Konferenz automatisch beitreten** – Sitzungs-ID des anderen eintragen
-- **Dort meinen Bildschirm teilen** – ohne Rückfrage
-- **Sprachkanal beitreten** und **dabei stumm**
-
-Dazu unter System **Beim Anmelden starten** – dann seid ihr nach dem Hochfahren ohne einen Klick in derselben Konferenz, mit allen Bildschirmen und (stummgeschaltetem) Sprachkanal. Ist der andere noch nicht da, versucht die App es alle 30 Sekunden weiter.
-
-> Wie die ID gefunden wird: Jede App veröffentlicht ihren aktuellen Link unter einem aus der Sitzungs-ID abgeleiteten Kanal bei [ntfy.sh](https://ntfy.sh) (kostenlos, ohne Konto). Dort steht nur die Adresse; wer die ID kennt, kann damit anklopfen – reinlassen musst trotzdem du.
-
-## Für Co-Working
-
-- **Pausieren** (im Fenster oder Tray) hält das Bild sofort an, wenn du kurz etwas Privates machst. Die Zuschauer sehen „Pausiert“, die Verbindung bleibt stehen.
-- Die **Quelle wechseln** geht jederzeit während des Teilens – die Zuschauer sehen einfach das neue Bild.
-- Alle Einstellungen gelten sofort, auch mitten im Stream – kein Neustart nötig.
-- Beide teilen gleichzeitig? Kein Problem: Jeder startet sein eigenes Teilen und schickt seinen Link.
-
-## Sprachkanal
-
-Reden wie bei Discord – direkt im Stream, ohne Extra-Programm:
-
-- **Wer streamt:** Im Fenster der App unter **Sprachkanal** auf **Beitreten** (geht, solange du teilst).
-- **Wer zuschaut:** Im Viewer oben rechts auf das **Headset-Symbol** → **Beitreten**.
-- Neben jedem Teilnehmer steht, ob gerade Ton von ihm ankommt (kbit/s). Unter den Einstellungen spielt **Ausgabe testen** einen leisen Ton – so prüfst du schnell, ob dein Lautsprecher stimmt.
-- Im Konferenz-Fenster (siehe oben) wird unter Windows alles, was dort spielt, automatisch aus deinem eigenen Stream herausgenommen – die anderen hören sich also nicht über deinen Stream wieder.
-
-Der Browser fragt einmal nach dem Mikrofon. Wer spricht, bekommt einen grünen Ring. Stumm (`Strg+Umschalt+M`) und taub (`Strg+Umschalt+D`) gibt es neben dem Knopf, die Lautstärke jeder Person lässt sich einzeln regeln.
-
-Unter dem Regler-Symbol stecken die Einstellungen: Mikrofon und Ausgabe wählen, **Sprachaktivierung** mit Empfindlichkeit (der Balken zeigt live deinen Pegel, der gelbe Strich die Schwelle) oder **Push-to-Talk**, Mikrofon-Verstärkung, **Echo-Unterdrückung**, **Rauschunterdrückung**, **automatische Lautstärke**, **Stereo** und die **Bitrate** (Standard 128 kbit/s, bis 510 kbit/s).
-
-> Push-to-Talk wirkt, solange das Fenster der App bzw. der Viewer aktiv ist – im Spiel lieber Sprachaktivierung nehmen.
-
-### Overlay
-
-**Overlay** neben dem Beitreten-Knopf blendet die Teilnehmerliste über allen Fenstern ein – auch über Spielen, ohne ihnen den Fokus zu nehmen. Mit der Maus irgendwo anfassen und verschieben, die Position bleibt gespeichert. In den Spracheinstellungen: **Deckkraft**, **Größe**, **nur wer gerade spricht** und **Klicks durchlassen** (dann liegt es wie ein Aufkleber über dem Spiel und lässt sich nicht mehr verschieben).
-
-Unter Linux öffnet das Overlay ein schwebendes Browserfenster (Chrome, Brave). Unter Hyprland macht diese Zeile in `hyprland.conf` es durchsichtig, angepinnt und rahmenlos:
-
-```
-windowrule = float, pin, opacity 0.85, noborder, title:^(Sprachkanal)$
-```
-
-## Diagnosemodus (wenn etwas ruckelt)
-
-Im Fenster ganz unten unter **System** → **Diagnosemodus** einschalten (oder die App mit `mss-share --diag` starten). Dann schreibt die App alle 2 Sekunden eine Zeile ins Log: CPU-Last von App, Encoder, Ton, Tunnel, Compositor und Browser, die Auslastung jeder Grafikkarte, Systemlast, freien Speicher, Bilder pro Sekunde, Datenrate, Warteschlangen und Meldungen des Encoders. Beim Einschalten kommen einmal Kernel, Grafikkarten und Monitore (mit Hz) dazu.
-
-So schickst du es weiter: Diagnosemodus an, ein paar Minuten wie gewohnt teilen, bis es ruckelt, dann
-
-```bash
-tail -150 ~/.config/minimalistic-screen-share/share.log
-```
-
-(Windows: **Log öffnen** im Fenster) und die Ausgabe schicken.
-
-## Bildeinstellungen
-
-Im Fenster unter **Einstellungen → Bild** gibt es vier Voreinstellungen:
-
-| Voreinstellung | Wofür |
-|---|---|
-| Sparsam | schwache Leitung, nur „mitgucken“ |
-| Ausgewogen | Standard |
-| Scharf (Text, Code) | Programmieren, Dokumente – kleiner Text bleibt lesbar |
-| Flüssig (Videos) | Videos, Spiele, viel Bewegung |
-
-Das Bild läuft als H.264-Video über die Grafikkarte – wie bei Discord oder OBS: 60 fps in voller Auflösung bei fast null CPU-Last. Die **Datenrate** bestimmt die Schärfe; 6 Mbit/s reichen für einen 1440p-Bildschirm. Wird die Leitung eng, springt das Bild zum nächsten Keyframe, **der Ton bleibt**.
-
-Windows nimmt automatisch den passenden Encoder (NVIDIA, AMD, Intel, sonst Windows/CPU) und lädt dafür beim ersten Start einmalig ffmpeg (~60 MB). Unter Hyprland/Omarchy läuft das Video über `wf-recorder` (VAAPI). Fenster und „Alle Monitore“ laufen noch im alten Einzelbild-Verfahren.
-
-**Kompatibilitätsmodus:** Bekommt ein Zuschauer kein Bild (sehr alter Browser, oder Link über `http://` im WLAN), schaltet den Modus ein – dann wieder Einzelbilder wie früher.
-
-## Ton
-
-- **Systemton mitschicken** schickt alles mit, was du hörst.
-- **Windows:** Unter Einstellungen → Ton ein Programm anhaken (z. B. Discord) – es landet nicht mehr im Stream, **du hörst es aber ganz normal weiter**. Wirkt sofort, auch mitten im Stream. Geht für ein Programm gleichzeitig und braucht Windows 10 (2004) oder neuer.
-- **Linux:** Angehakte Programme werden während des Teilens auch bei dir stummgeschaltet und beim Beenden wieder laut.
-- Schaust du **auf demselben PC** zu, der gerade streamt, bleibt der Viewer automatisch stumm – sonst würde der Ton sich selbst wieder aufnehmen und extrem laut rückkoppeln.
-
-## Wenn was klemmt
-
-| Problem | Lösung |
-|---|---|
-| „Warte auf Freigabe…“ hängt | Der Streamer muss **Reinlassen** klicken (Meldung am Symbol oder im Fenster) |
-| „Gerade wird nichts geteilt“ | Der andere hat noch nicht auf **Teilen starten** gedrückt – offen lassen, es geht von selbst los |
-| Kein Ton | Unten erscheint ein gelber Knopf „Ton ist aus“ – einmal draufklicken |
-| Link funktioniert nicht mehr | Der Link gilt, solange die App beim Streamer läuft. Nach einem Neustart der App gibt es einen neuen Link |
-| Bild ruckelt | Unter Linux `wf-recorder` installiert? Sonst Voreinstellung **Sparsam** nehmen. In den Verbindungsdaten (Taste `I`) muss „H.264“ stehen |
-| Omarchy: „grim fehlt“ | `sudo pacman -S grim` |
-
-## Wie kommt der Link ins Internet?
-
-Die App bringt ihren eigenen kleinen Server mit und stellt ihn über einen kostenlosen [Cloudflare-Tunnel](https://github.com/cloudflare/cloudflared) ins Netz – ohne Konto, ohne Router-Einstellungen, ohne offene Ports. Beim ersten Start lädt sie dafür einmalig ca. 40 MB. Wer das nicht möchte: **Einstellungen → Verbindung → Nur im selben Netzwerk** oder einen eigenen Server eintragen (siehe [README](README.md#eigener-server)).
+- **„Falsches Passwort“:** Raum-ID und Passwort genau vergleichen. Groß- und Kleinschreibung zählt beim Passwort.
+- **„Suche den Raum…“ bleibt stehen:** Dann betreibst du den Raum bald selbst. Die anderen finden dich, sobald der Tunnel steht (erstes Mal: cloudflared wird geladen, das dauert etwas).
+- **Jemand hört dich nicht:** Steht in der Liste bei dir ein rotes Mikrofon? Unter Einstellungen → Sprache prüfen, ob das richtige Mikrofon gewählt ist und der Pegel über die gelbe Marke geht.
+- **Ruckeln:** Unter Einstellungen → Teilen die Bildrate oder Datenrate senken. Unter Einstellungen → Allgemein → **Diagnosemodus** einschalten und die Logdatei („Log öffnen“) schicken.

@@ -2,7 +2,7 @@ package app
 
 import (
 	"encoding/json"
-	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -13,47 +13,67 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/config"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/overlay"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/update"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/version"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/web"
 )
 
-// Handler liefert die lokale API plus das Host-Panel.
+func versionString() string { return version.Version }
+func updateStatus() any     { return update.Status() }
+
+// Handler liefert das Raum-Fenster und seine lokale API. Alles hier ist nur
+// für dieses Fenster gedacht – der Status enthält die Raum-Schlüssel.
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/status", a.localOnly(a.handleStatus))
-	mux.HandleFunc("/api/config", a.localOnly(a.handleConfig))
-	mux.HandleFunc("/api/targets", a.localOnly(a.handleTargets))
-	mux.HandleFunc("/api/start", a.localOnly(a.handleStart))
-	mux.HandleFunc("/api/stop", a.localOnly(a.handleStop))
-	mux.HandleFunc("/api/allow", a.localOnly(a.handleAllow))
-	mux.HandleFunc("/api/deny", a.localOnly(a.handleDeny))
-	mux.HandleFunc("/api/allow-always", a.localOnly(a.handleAllowAlways))
-	mux.HandleFunc("/api/untrust", a.localOnly(a.handleUntrust))
-	mux.HandleFunc("/api/pause", a.localOnly(a.handlePause))
-	mux.HandleFunc("/api/target", a.localOnly(a.handleTarget))
-	mux.HandleFunc("/api/autostart", a.localOnly(a.handleAutostart))
-	mux.HandleFunc("/api/quit", a.localOnly(a.handleQuit))
-	mux.HandleFunc("/api/hello", a.handleHello)
-	mux.HandleFunc("/api/overlay", a.handleOverlay)
-	mux.HandleFunc("/api/overlay/state", a.handleOverlayState)
-	mux.HandleFunc("/api/openlog", a.localOnly(a.handleOpenLog))
-	mux.HandleFunc("/api/update", a.localOnly(a.handleUpdate))
-	mux.HandleFunc("/api/present", a.handlePresent)
-	mux.HandleFunc("/api/conference/join", a.localOnly(a.handleConferenceJoin))
-	mux.HandleFunc("/api/conference/own", a.localOnly(a.handleConferenceOwn))
-	mux.HandleFunc("/api/present/accept", a.localOnly(a.handlePresentAccept))
-	mux.HandleFunc("/api/present/decline", a.localOnly(a.handlePresentDecline))
-	mux.HandleFunc("/api/present/stop", a.localOnly(a.handlePresentStop))
-	mux.HandleFunc("/api/audiosessions", a.localOnly(a.handleAudioSessions))
-	mux.HandleFunc("/api/openmixer", a.localOnly(a.handleOpenMixer))
-	mux.Handle("/", hostIndex(web.FS()))
+	api := map[string]http.HandlerFunc{
+		"/api/status":        a.handleStatus,
+		"/api/config":        a.handleConfig,
+		"/api/targets":       a.handleTargets,
+		"/api/join":          a.handleJoin,
+		"/api/join-saved":    a.handleJoinSaved,
+		"/api/forget":        a.handleForget,
+		"/api/leave":         post(func() { a.LeaveRoom() }),
+		"/api/share/start":   a.handleShareStart,
+		"/api/share/stop":    post(a.StopShare),
+		"/api/share/pause":   onOff(a.SharePaused),
+		"/api/share/audio":   onOff(a.ShareAudio),
+		"/api/voice-joined":  post(a.ConsumeAutoVoice),
+		"/api/autostart":     a.handleAutostart,
+		"/api/overlay":       onOff(func(on bool) { overlay.Show(on && overlay.Supported()) }),
+		"/api/overlay/state": a.handleOverlayState,
+		"/api/update":        post(a.ApplyUpdate),
+		"/api/openlog":       post(func() { openURL(filepath.Join(config.Dir(), "share.log")) }),
+		"/api/audiosessions": a.handleAudioSessions,
+		"/api/openmixer":     post(func() { openMixer(a.log) }),
+		"/api/show":          post(a.OpenWindow),
+		"/api/quit":          post(func() { go a.Quit() }),
+	}
+	for path, h := range api {
+		mux.HandleFunc(path, localOnly(h))
+	}
+	files := http.FileServerFS(web.FS())
+	mux.Handle("/", localOnly(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			r = r.Clone(r.Context())
+			r.URL.Path = "/room.html"
+		}
+		files.ServeHTTP(w, r)
+	}))
 	return mux
 }
 
-// localOnly lässt nur Anfragen von der eigenen Seite durch. Ohne CORS-Header
-// kommt ein fremder Browser mit JSON-Postings ohnehin nicht weit – der
-// Origin-Check ist trotzdem billig.
-func (a *App) localOnly(next http.HandlerFunc) http.HandlerFunc {
+// localOnly lässt nur das eigene Fenster durch: Host muss 127.0.0.1 sein
+// (gegen DNS-Rebinding), ein Origin ebenfalls.
+func localOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		if host != "127.0.0.1" && host != "localhost" {
+			writeError(w, http.StatusForbidden, "nur lokal")
+			return
+		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
 			if err != nil || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
@@ -65,28 +85,69 @@ func (a *App) localOnly(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// post macht aus einer Aktion ohne Eingabe einen POST-Handler.
+func post(fn func()) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "nur POST")
+			return
+		}
+		fn()
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// onOff macht aus einem Schalter einen POST-Handler für {"on": bool}.
+func onOff(fn func(bool)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if on, ok := decodeOn(w, r); ok {
+			fn(on)
+			writeJSON(w, http.StatusOK, map[string]bool{"on": on})
+		}
+	}
+}
+
+// decode liest einen POST-Body als JSON.
+func decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return false
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(v); err != nil {
+		writeError(w, http.StatusBadRequest, "ungültige Anfrage: "+err.Error())
+		return false
+	}
+	return true
+}
+
+func decodeOn(w http.ResponseWriter, r *http.Request) (bool, bool) {
+	var body struct {
+		On bool `json:"on"`
+	}
+	ok := decode(w, r, &body)
+	return body.On, ok
+}
+
 func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, a.Status())
+	writeJSON(w, http.StatusOK, a.RoomStatus())
 }
 
 func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
+	if r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, a.Config())
-	case http.MethodPost:
-		var c config.Config
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&c); err != nil {
-			writeError(w, http.StatusBadRequest, "ungültige Einstellungen: "+err.Error())
-			return
-		}
-		if err := a.SaveConfig(c); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, a.Config())
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "nur GET oder POST")
+		return
 	}
+	var c config.Config
+	if !decode(w, r, &c) {
+		return
+	}
+	// Gemerkte Räume ändert nur Beitreten/Vergessen.
+	c.Rooms = a.Config().Rooms
+	if err := a.SaveConfig(c); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.Config())
 }
 
 func (a *App) handleTargets(w http.ResponseWriter, r *http.Request) {
@@ -98,138 +159,65 @@ func (a *App) handleTargets(w http.ResponseWriter, r *http.Request) {
 	if windows == nil {
 		windows = []capture.Window{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"platform": runtime.GOOS,
-		"monitors": monitors,
-		"windows":  windows,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"platform": runtime.GOOS, "monitors": monitors, "windows": windows})
 }
 
-func (a *App) handleStart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	var target capture.Target
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&target); err != nil {
-		writeError(w, http.StatusBadRequest, "ungültiges Ziel: "+err.Error())
-		return
-	}
-	if err := a.Start(target); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, a.Status())
-}
-
-func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	a.Stop()
-	writeJSON(w, http.StatusOK, a.Status())
-}
-
-// handleAllow/handleDeny entscheiden über eine Zuschaueranfrage.
-func (a *App) handleAllow(w http.ResponseWriter, r *http.Request) {
-	a.handleKnockDecision(w, r, a.Allow)
-}
-
-func (a *App) handleDeny(w http.ResponseWriter, r *http.Request) {
-	a.handleKnockDecision(w, r, a.Deny)
-}
-
-func (a *App) handleAllowAlways(w http.ResponseWriter, r *http.Request) {
-	a.handleKnockDecision(w, r, a.AllowAlways)
-}
-
-func (a *App) handleUntrust(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
+func (a *App) handleJoin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Token string `json:"token"`
+		Room     string `json:"room"`
+		Password string `json:"password"`
+		Remember bool   `json:"remember"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "ungültige Anfrage")
+	if !decode(w, r, &body) {
 		return
 	}
-	if err := a.Untrust(body.Token); err != nil {
+	if err := a.JoinRoom(body.Room, body.Password, body.Remember); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a.Config())
+	writeJSON(w, http.StatusOK, a.RoomStatus())
 }
 
-func (a *App) handleKnockDecision(w http.ResponseWriter, r *http.Request, decide func(uint64) error) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
+func (a *App) handleJoinSaved(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID uint64 `json:"id"`
+		Room string `json:"room"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "ungültige Anfrage: "+err.Error())
+	if !decode(w, r, &body) {
 		return
 	}
-	if err := decide(body.ID); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, a.Status())
-}
-
-// decodeOn liest {"on": bool} aus dem Body.
-func decodeOn(w http.ResponseWriter, r *http.Request) (bool, bool) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return false, false
-	}
-	var body struct {
-		On bool `json:"on"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "ungültige Anfrage: "+err.Error())
-		return false, false
-	}
-	return body.On, true
-}
-
-// handlePause hält den Stream an oder lässt ihn weiterlaufen.
-func (a *App) handlePause(w http.ResponseWriter, r *http.Request) {
-	on, ok := decodeOn(w, r)
-	if !ok {
-		return
-	}
-	if err := a.SetPaused(on); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, a.Status())
-}
-
-// handleTarget wechselt die Quelle – im laufenden Stream ohne Unterbrechung.
-func (a *App) handleTarget(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	var target capture.Target
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&target); err != nil {
-		writeError(w, http.StatusBadRequest, "ungültiges Ziel: "+err.Error())
-		return
-	}
-	if err := a.SetTarget(target); err != nil {
+	if err := a.JoinSaved(body.Room); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a.Status())
+	writeJSON(w, http.StatusOK, a.RoomStatus())
 }
 
-// handleAutostart schaltet den Start beim Anmelden um.
+func (a *App) handleForget(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Room string `json:"room"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if err := a.Forget(body.Room); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.RoomStatus())
+}
+
+func (a *App) handleShareStart(w http.ResponseWriter, r *http.Request) {
+	var target capture.Target
+	if !decode(w, r, &target) {
+		return
+	}
+	if err := a.StartShare(target); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.RoomStatus())
+}
+
 func (a *App) handleAutostart(w http.ResponseWriter, r *http.Request) {
 	on, ok := decodeOn(w, r)
 	if !ok {
@@ -239,198 +227,30 @@ func (a *App) handleAutostart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a.Status())
-}
-
-// handleHello beantwortet dem Viewer (von jeder Seite aus) nur eine Frage:
-// Streamt dieser PC gerade die Sitzung, die du ansehen willst? Dann muss der
-// Viewer stumm bleiben – sonst nimmt der Systemton den eigenen Stream wieder
-// auf und es koppelt sich ohrenbetäubend laut auf.
-func (a *App) handleHello(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Private-Network", "true")
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	room := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("room")))
-	cfg := a.Config()
-	writeJSON(w, http.StatusOK, map[string]any{"self": a.Streaming() && room != "" && room == cfg.Room, "platform": platform()})
-}
-
-// openCORS erlaubt Aufrufe von jeder Seite – der Viewer läuft unter der
-// Tunnel-Adresse des Streamers, das Overlay aber auf diesem PC.
-func openCORS(w http.ResponseWriter, r *http.Request) bool {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Private-Network", "true")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return false
-	}
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return false
-	}
-	return true
-}
-
-// handleOverlay blendet das Sprach-Overlay ein oder aus.
-func (a *App) handleOverlay(w http.ResponseWriter, r *http.Request) {
-	if !openCORS(w, r) {
-		return
-	}
-	on, ok := decodeOn(w, r)
-	if !ok {
-		return
-	}
-	if !overlay.Supported() {
-		writeError(w, http.StatusNotImplemented, "Overlay gibt es hier nur im Browser")
-		return
-	}
-	overlay.Show(on)
 	writeJSON(w, http.StatusOK, map[string]bool{"on": on})
 }
 
 // handleOverlayState nimmt den Zustand des Sprachkanals für das Overlay an.
 func (a *App) handleOverlayState(w http.ResponseWriter, r *http.Request) {
-	if !openCORS(w, r) {
-		return
-	}
 	var st overlay.State
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&st); err != nil {
-		writeError(w, http.StatusBadRequest, "ungültiger Zustand")
+	if !decode(w, r, &st) {
 		return
 	}
 	overlay.Update(st)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// handlePresent: Die Konferenz-Seite bittet darum, hier zu teilen. Offen
-// für jede Seite – gestreamt wird aber erst nach Bestätigung im Panel.
-func (a *App) handlePresent(w http.ResponseWriter, r *http.Request) {
-	if !openCORS(w, r) {
-		return
-	}
-	var req PresentRequest
-	var body struct {
-		Server, Room, Token, Host, Nonce string
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "ungültige Anfrage")
-		return
-	}
-	req = PresentRequest{Server: body.Server, Room: body.Room, Token: body.Token, Host: body.Host, Nonce: body.Nonce}
-	if err := a.RequestPresent(req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// handleConferenceJoin öffnet die Konferenz eines anderen (ID oder Link).
-func (a *App) handleConferenceJoin(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Target string `json:"target"`
-	}
-	if r.Method != http.MethodPost || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body) != nil {
-		writeError(w, http.StatusBadRequest, "ungültige Anfrage")
-		return
-	}
-	if err := a.JoinConference(body.Target, false, false, false); err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// handleConferenceOwn öffnet die eigene Konferenz im Fenster.
-func (a *App) handleConferenceOwn(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	if err := a.OpenOwnConference(false, false); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (a *App) handlePresentAccept(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	var target capture.Target
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&target); err != nil {
-		writeError(w, http.StatusBadRequest, "ungültiges Ziel")
-		return
-	}
-	if err := a.AcceptPresent(target); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, a.Status())
-}
-
-func (a *App) handlePresentDecline(w http.ResponseWriter, r *http.Request) {
-	a.DeclinePresent()
-	writeJSON(w, http.StatusOK, a.Status())
-}
-
-func (a *App) handlePresentStop(w http.ResponseWriter, r *http.Request) {
-	a.StopPresent()
-	writeJSON(w, http.StatusOK, a.Status())
-}
-
-// handleUpdate spielt die neueste Version ein (POST).
-func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	a.ApplyUpdate()
-	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
-}
-
-// handleOpenLog öffnet die Logdatei im Standard-Editor.
-func (a *App) handleOpenLog(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	openURL(filepath.Join(config.Dir(), "share.log"))
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// handleQuit beendet die App – das nutzt eine neue Version beim Update.
-func (a *App) handleQuit(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	go a.Quit()
-}
-
-// handleAudioSessions listet die Tonquellen auf und merkt sich, welche
-// Programme nicht mitgestreamt werden sollen.
+// handleAudioSessions listet die Tonquellen auf und merkt sich, welches
+// Programm nicht mitgeteilt werden soll.
 func (a *App) handleAudioSessions(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
+	if r.Method == http.MethodGet {
 		sessions, err := audio.ListSessions()
 		if sessions == nil {
 			sessions = []audio.Session{}
 		}
-		a.mu.Lock()
-		muted := append([]string(nil), a.cfg.MutedApps...)
-		streaming := a.sess != nil
-		a.mu.Unlock()
 		resp := map[string]any{
 			"sessions":  sessions,
-			"muted":     muted,
-			"streaming": streaming,
+			"muted":     a.Config().MutedApps,
 			"exclusive": excludeInCapture,
 			"note":      audio.ExclusionNote(),
 		}
@@ -438,86 +258,56 @@ func (a *App) handleAudioSessions(w http.ResponseWriter, r *http.Request) {
 			resp["error"] = err.Error()
 		}
 		writeJSON(w, http.StatusOK, resp)
-
-	case http.MethodPost:
-		var body struct {
-			Name  string `json:"name"`
-			Muted bool   `json:"muted"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "ungültige Anfrage: "+err.Error())
-			return
-		}
-		name := strings.ToLower(strings.TrimSpace(body.Name))
-		if name == "" {
-			writeError(w, http.StatusBadRequest, "Programmname fehlt")
-			return
-		}
-		cfg := a.Config()
-		if excludeInCapture {
-			// Windows kann genau ein Programm aus der Aufnahme nehmen.
-			cfg.MutedApps = nil
-			if body.Muted {
-				cfg.MutedApps = []string{name}
-			}
-		} else {
-			cfg.MutedApps = toggleString(cfg.MutedApps, name, body.Muted)
-		}
-		if err := a.SaveConfig(cfg); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// Nur während eines Streams sofort umsetzen – sonst würde man sich
-		// selbst den Ton abdrehen.
-		if a.Streaming() && !excludeInCapture {
-			if err := audio.SetMuted(name, body.Muted); err != nil {
-				writeJSON(w, http.StatusOK, map[string]string{"warning": err.Error()})
-				return
-			}
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "nur GET oder POST")
+		return
 	}
+	var body struct {
+		Name  string `json:"name"`
+		Muted bool   `json:"muted"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	name := strings.ToLower(strings.TrimSpace(body.Name))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "Programmname fehlt")
+		return
+	}
+	cfg := a.Config()
+	if excludeInCapture {
+		// Windows kann genau ein Programm aus der Aufnahme nehmen.
+		cfg.MutedApps = nil
+		if body.Muted {
+			cfg.MutedApps = []string{name}
+		}
+	} else {
+		cfg.MutedApps = toggleString(cfg.MutedApps, name, body.Muted)
+	}
+	if err := a.SaveConfig(cfg); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Linux: nur während des Teilens stumm schalten – sonst dreht man sich
+	// selbst den Ton ab.
+	if a.Sharing() && !excludeInCapture {
+		if err := audio.SetMuted(name, body.Muted); err != nil {
+			writeJSON(w, http.StatusOK, map[string]string{"warning": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func toggleString(list []string, value string, add bool) []string {
 	out := make([]string, 0, len(list)+1)
 	for _, v := range list {
-		if strings.EqualFold(v, value) {
-			continue
+		if !strings.EqualFold(v, value) {
+			out = append(out, v)
 		}
-		out = append(out, v)
 	}
 	if add {
 		out = append(out, value)
 	}
 	return out
-}
-
-// handleOpenMixer öffnet die Ton-Mischpult-Oberfläche des Systems – dort
-// lässt sich ein Programm dauerhaft "Von Aufnahme ausschließen".
-func (a *App) handleOpenMixer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "nur POST")
-		return
-	}
-	openMixer(a.log)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func hostIndex(static fs.FS) http.Handler {
-	files := http.FileServerFS(static)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			r2 := r.Clone(r.Context())
-			r2.URL.Path = "/host.html"
-			files.ServeHTTP(w, r2)
-			return
-		}
-		files.ServeHTTP(w, r)
-	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

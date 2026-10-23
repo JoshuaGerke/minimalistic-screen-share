@@ -40,7 +40,7 @@ $Version    = "0.1.0"   # wird beim Release automatisch auf die Tag-Version gese
 $Repo       = "JoshuaGerke/minimalistic-screen-share"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\minimalistic-screen-share"
 $ScriptDir  = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-$Exes       = @("mss-share.exe", "mss-relay.exe", "mss-viewer.exe")
+$Exes       = @("mss-share.exe")
 
 function Schritt($text) { Write-Host "==> $text" }
 
@@ -64,10 +64,6 @@ if (-not $sourceDir -and -not $FromGitHub -and (Test-Path (Join-Path $ScriptDir 
     Push-Location $ScriptDir
     try {
         & go build -trimpath -ldflags "-s -w -H=windowsgui" -o bin\mss-share.exe ./cmd/share
-        if ($LASTEXITCODE -ne 0) { throw "go build fehlgeschlagen" }
-        & go build -trimpath -ldflags "-s -w" -o bin\mss-relay.exe ./cmd/relay
-        if ($LASTEXITCODE -ne 0) { throw "go build fehlgeschlagen" }
-        & go build -trimpath -ldflags "-s -w" -o bin\mss-viewer.exe ./cmd/viewer
         if ($LASTEXITCODE -ne 0) { throw "go build fehlgeschlagen" }
     } finally {
         Pop-Location
@@ -160,7 +156,7 @@ if ($userPath -notlike "*$InstallDir*") {
 
 Write-Host ""
 Write-Host "Fertig. Das Symbol sitzt im Infobereich - bei Windows 11 hinter dem Pfeil."
-Write-Host "Start über Startmenü oder im Terminal: mss-share --settings"
+Write-Host "Start über Startmenü oder im Terminal: mss-share"
 Write-Host "Deinstallieren: uninstall.ps1"
 
 if ($StartNow -or $wasRunning) {

@@ -33,20 +33,25 @@ type entry struct {
 	URL string `json:"url"`
 }
 
-// Publish veröffentlicht die aktuelle Adresse der Sitzung.
-func Publish(ctx context.Context, room, url string) error {
+// Publish veröffentlicht die aktuelle Adresse und liefert den Zeitpunkt,
+// den ntfy dafür vergeben hat.
+func Publish(ctx context.Context, room, url string) (int64, error) {
 	body, _ := json.Marshal(entry{URL: url})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, service+Topic(room), strings.NewReader(string(body)))
 	req.Header.Set("Cache", "yes")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ntfy antwortet mit %d", resp.StatusCode)
+		return 0, fmt.Errorf("ntfy antwortet mit %d", resp.StatusCode)
 	}
-	return nil
+	var ev struct {
+		Time int64 `json:"time"`
+	}
+	json.NewDecoder(resp.Body).Decode(&ev)
+	return ev.Time, nil
 }
 
 // Resolve sucht die zuletzt veröffentlichte Adresse einer Sitzung.
@@ -89,7 +94,7 @@ func Keep(stop <-chan struct{}, room func() string, current func() string, logf 
 		r, u := room(), current()
 		if u != "" && r != "" && (r+u != last || time.Since(lastAt) > 6*time.Hour) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			err := Publish(ctx, r, u)
+			_, err := Publish(ctx, r, u)
 			cancel()
 			if err != nil {
 				logf("Sitzungs-ID veröffentlichen: %v", err)
@@ -104,4 +109,42 @@ func Keep(stop <-chan struct{}, room func() string, current func() string, logf 
 		case <-tick.C:
 		}
 	}
+}
+
+// Entry ist eine veröffentlichte Adresse samt Zeitpunkt.
+type Entry struct {
+	URL  string
+	Time int64
+}
+
+// Entries liefert alle Adressen der letzten 12 Stunden, älteste zuerst.
+// Läuft ein Raum doppelt (zwei haben gleichzeitig übernommen), gewinnt der
+// früheste, der noch erreichbar ist.
+func Entries(ctx context.Context, room string) ([]Entry, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, service+Topic(room)+"/json?poll=1&since=12h", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out []Entry
+	seen := map[string]bool{}
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		var ev struct {
+			Event   string `json:"event"`
+			Time    int64  `json:"time"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &ev) != nil || ev.Event != "message" {
+			continue
+		}
+		var e entry
+		if json.Unmarshal([]byte(ev.Message), &e) != nil || !strings.HasPrefix(e.URL, "http") || seen[e.URL] {
+			continue
+		}
+		seen[e.URL] = true
+		out = append(out, Entry{URL: e.URL, Time: ev.Time})
+	}
+	return out, nil
 }

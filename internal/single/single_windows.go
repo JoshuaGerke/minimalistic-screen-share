@@ -4,6 +4,7 @@
 package single
 
 import (
+	"os"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -17,7 +18,8 @@ var (
 
 // Acquire liefert true, wenn wir die erste Instanz sind.
 func Acquire() (bool, error) {
-	name, err := windows.UTF16PtrFromString(`Local\minimalistic-screen-share`)
+	// MSS_PROFILE trennt Test-Instanzen (zusammen mit eigenem APPDATA).
+	name, err := windows.UTF16PtrFromString(`Local\minimalistic-screen-share` + os.Getenv("MSS_PROFILE"))
 	if err != nil {
 		return false, err
 	}

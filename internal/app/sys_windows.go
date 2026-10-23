@@ -17,6 +17,8 @@ import (
 
 func platform() string { return "windows" }
 
+const isWindows = true
+
 const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
 const runValue = "minimalistic-screen-share"
 

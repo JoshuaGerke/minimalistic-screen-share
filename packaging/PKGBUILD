@@ -29,18 +29,12 @@ build() {
 	cd "$pkgname"
 	export CGO_ENABLED=0
 	go build -trimpath -ldflags "-s -w" -o mss-share ./cmd/share
-	go build -trimpath -ldflags "-s -w" -o mss-relay ./cmd/relay
-	go build -trimpath -ldflags "-s -w" -o mss-viewer ./cmd/viewer
 }
 
 package() {
 	cd "$pkgname"
 	install -Dm755 mss-share "$pkgdir/usr/bin/mss-share"
-	install -Dm755 mss-relay "$pkgdir/usr/bin/mss-relay"
-	install -Dm755 mss-viewer "$pkgdir/usr/bin/mss-viewer"
 	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 	install -Dm644 packaging/minimalistic-screen-share.desktop \
 		"$pkgdir/usr/share/applications/minimalistic-screen-share.desktop"
-	install -Dm644 packaging/mss-relay.service \
-		"$pkgdir/usr/lib/systemd/user/mss-relay.service"
 }

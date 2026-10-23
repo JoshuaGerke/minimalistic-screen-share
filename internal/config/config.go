@@ -1,64 +1,56 @@
-// Paket config hält die Einstellungen des Clients in einer kleinen JSON-Datei.
+// Paket config hält die Einstellungen der App in einer kleinen JSON-Datei.
 package config
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 )
 
-// TrustedPerson ist jemand, der dauerhaft reindarf ("Immer reinlassen").
-type TrustedPerson struct {
-	Name  string `json:"name"`
-	Token string `json:"token"`
-}
-
-// Erreichbarkeit: Wie Zuschauer zum Stream kommen.
+// Erreichbarkeit eines Raums, den dieser PC betreibt.
 const (
-	ReachInternet = "internet" // eingebauter Relay + Tunnel, Link funktioniert überall
-	ReachLAN      = "lan"      // eingebauter Relay, nur im selben Netz
-	ReachServer   = "server"   // eigener Relay, z. B. auf einem VPS
+	ReachInternet = "internet" // eingebauter Relay + Tunnel, erreichbar von überall
+	ReachLAN      = "lan"      // nur im selben Netzwerk
 )
 
-type Config struct {
-	Reach      string   `json:"reach"`
-	Server     string   `json:"server"`
-	Room       string   `json:"room"`
-	Name       string   `json:"name"`
-	FPS        int      `json:"fps"`
-	Quality    int      `json:"quality"`
-	MaxWidth   int      `json:"max_width"`
-	Bitrate    int      `json:"bitrate"`    // kbit/s für H.264
-	VideoMode  string   `json:"video_mode"` // "auto" (H.264 per Grafikkarte) oder "jpeg"
-	Audio      bool     `json:"audio"`
-	AutoAccept bool     `json:"auto_accept"`
-	MutedApps  []string `json:"muted_apps,omitempty"`
-	Diagnose   bool     `json:"diagnose,omitempty"` // Leistungsdaten alle 2 s ins Log
-	Pointing   bool     `json:"pointing,omitempty"` // Zuschauer dürfen per 5-fach-Klick zeigen
-	// Trusted: Personen, die immer ohne Nachfrage reindürfen.
-	Trusted []TrustedPerson `json:"trusted,omitempty"`
-	// Beim Start: eigenen Bildschirm teilen, einer Konferenz beitreten (ID
-	// oder Link), dort automatisch teilen, Sprachkanal (stumm) beitreten.
-	AutoShare   bool   `json:"auto_share,omitempty"`
-	AutoJoin    string `json:"auto_join,omitempty"`
-	AutoPresent bool   `json:"auto_present,omitempty"`
-	AutoVoice   bool   `json:"auto_voice,omitempty"`
-	AutoMuted   bool   `json:"auto_muted,omitempty"`
-	// Position des Sprach-Overlays (nur gültig, wenn OverlaySet).
-	OverlayX   int            `json:"overlay_x,omitempty"`
-	OverlayY   int            `json:"overlay_y,omitempty"`
-	OverlaySet bool           `json:"overlay_set,omitempty"`
-	Target     capture.Target `json:"target"`
+// SavedRoom ist ein gemerkter Raum. Gespeichert werden die abgeleiteten
+// Schlüssel, nicht das Passwort.
+type SavedRoom struct {
+	ID   string `json:"id"`
+	Enc  string `json:"enc"`
+	Auth string `json:"auth"`
 }
 
-var roomPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
+type Config struct {
+	Name  string `json:"name"`
+	Reach string `json:"reach"`
+
+	// Bildschirm teilen
+	FPS       int            `json:"fps"`
+	Bitrate   int            `json:"bitrate"` // kbit/s
+	Audio     bool           `json:"audio"`   // Systemton mitschicken
+	Target    capture.Target `json:"target"`
+	MutedApps []string       `json:"muted_apps,omitempty"` // nicht mitstreamen
+	Pointing  bool           `json:"pointing"`             // Zeigen per 5-fach-Klick erlauben
+
+	Rooms []SavedRoom `json:"rooms,omitempty"`
+
+	// Beim Start
+	AutoJoin  string `json:"auto_join,omitempty"` // ID eines gemerkten Raums
+	AutoShare bool   `json:"auto_share,omitempty"`
+	AutoVoice bool   `json:"auto_voice,omitempty"`
+	AutoMuted bool   `json:"auto_muted,omitempty"`
+
+	Diagnose   bool `json:"diagnose,omitempty"`
+	OverlayX   int  `json:"overlay_x,omitempty"`
+	OverlayY   int  `json:"overlay_y,omitempty"`
+	OverlaySet bool `json:"overlay_set,omitempty"`
+}
 
 // Default sind die Startwerte beim ersten Programmstart.
 func Default() Config {
@@ -68,62 +60,14 @@ func Default() Config {
 		name = "PC"
 	}
 	return Config{
-		Reach:     ReachInternet,
-		Server:    "",
-		Room:      DefaultSessionID(),
-		Name:      name,
-		FPS:       15,
-		Quality:   70,
-		MaxWidth:  1600,
-		Bitrate:   6000,
-		VideoMode: "auto",
-		Audio:     true,
-		Target:    capture.Primary(),
+		Name:     name,
+		Reach:    ReachInternet,
+		FPS:      60,
+		Bitrate:  6000,
+		Audio:    true,
+		Pointing: true,
+		Target:   capture.Primary(),
 	}
-}
-
-// DefaultSessionID baut aus dem Rechnernamen eine stabile Sitzungs-ID mit
-// kurzem Anhängsel, damit zwei gleiche Rechnernamen nicht kollidieren.
-// 1 PC = 1 ID, änderbar im Panel.
-func DefaultSessionID() string {
-	host, _ := os.Hostname()
-	slug := slugify(strings.Split(host, ".")[0])
-	if len(slug) > 24 {
-		slug = strings.Trim(slug[:24], "-")
-	}
-	if slug == "" {
-		slug = "pc"
-	}
-	return slug + "-" + randSuffix(4)
-}
-
-func slugify(s string) string {
-	s = strings.ToLower(s)
-	replacer := strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss")
-	s = replacer.Replace(s)
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == ' ' || r == '_' || r == '.':
-			b.WriteRune('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	for strings.Contains(out, "--") {
-		out = strings.ReplaceAll(out, "--", "-")
-	}
-	return out
-}
-
-func randSuffix(n int) string {
-	const alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = alphabet[rand.Intn(len(alphabet))]
-	}
-	return string(b)
 }
 
 // Dir ist das Konfigverzeichnis, wird bei Bedarf angelegt.
@@ -133,144 +77,93 @@ func Dir() string {
 		base = "."
 	}
 	dir := filepath.Join(base, "minimalistic-screen-share")
-	os.MkdirAll(dir, 0o755)
+	os.MkdirAll(dir, 0o700)
 	return dir
 }
 
-func Path() string {
-	return filepath.Join(Dir(), "config.json")
-}
+func Path() string { return filepath.Join(Dir(), "config.json") }
 
-// Load liest die Einstellungen und füllt fehlende Werte mit Defaults.
+// Load liest die Einstellungen; fehlende Werte kommen aus Default.
 func Load() Config {
 	cfg := Default()
 	data, err := os.ReadFile(Path())
 	if err != nil {
 		return cfg
 	}
-	// Windows-Editoren (Notepad, PowerShell) hängen gern ein BOM davor.
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	var loaded Config
-	if err := json.Unmarshal(data, &loaded); err != nil {
+	if json.Unmarshal(data, &loaded) != nil {
 		return cfg
 	}
-	if loaded.Server != "" {
-		cfg.Server = loaded.Server
-	}
-	if loaded.Room != "" {
-		cfg.Room = loaded.Room
-	}
+	// Felder aus älteren Versionen (Zuschauer-Links) werden einfach ignoriert.
 	if loaded.Name != "" {
 		cfg.Name = loaded.Name
+	}
+	if loaded.Reach == ReachLAN {
+		cfg.Reach = ReachLAN
 	}
 	if loaded.FPS > 0 {
 		cfg.FPS = loaded.FPS
 	}
-	if loaded.Quality > 0 {
-		cfg.Quality = loaded.Quality
-	}
-	cfg.MaxWidth = loaded.MaxWidth
 	if loaded.Bitrate > 0 {
 		cfg.Bitrate = loaded.Bitrate
 	}
-	if loaded.VideoMode != "" {
-		cfg.VideoMode = loaded.VideoMode
-	}
-	cfg.Audio = loaded.Audio
-	cfg.AutoAccept = loaded.AutoAccept
-	cfg.MutedApps = loaded.MutedApps
-	cfg.Diagnose = loaded.Diagnose
-	cfg.Pointing = loaded.Pointing
-	cfg.Trusted = loaded.Trusted
-	cfg.AutoShare, cfg.AutoJoin, cfg.AutoPresent = loaded.AutoShare, loaded.AutoJoin, loaded.AutoPresent
-	cfg.AutoVoice, cfg.AutoMuted = loaded.AutoVoice, loaded.AutoMuted
-	cfg.OverlayX, cfg.OverlayY, cfg.OverlaySet = loaded.OverlayX, loaded.OverlayY, loaded.OverlaySet
 	if loaded.Target.Kind != "" {
 		cfg.Target = loaded.Target
 	}
-	cfg.Reach = loaded.Reach
-	if cfg.Reach == "" {
-		// Config aus einer Version vor den Modi: Zeigte der Server woanders
-		// hin, war das ein eigener Relay – sonst gleich Internet-Modus.
-		// Eine alte Quick-Tunnel-Adresse eines anderen ist längst tot –
-		// dann lieber gleich den eigenen Tunnel nehmen.
-		cfg.Reach = ReachInternet
-		if !IsLocalServer(cfg.Server) && !strings.Contains(cfg.Server, ".trycloudflare.com") {
-			cfg.Reach = ReachServer
-		}
-		if cfg.Reach != ReachServer {
-			cfg.Server = ""
-		}
+	var probe map[string]json.RawMessage
+	json.Unmarshal(data, &probe)
+	if _, ok := probe["audio"]; ok {
+		cfg.Audio = loaded.Audio
 	}
-	cfg.normalize()
+	if _, ok := probe["pointing"]; ok {
+		cfg.Pointing = loaded.Pointing
+	}
+	cfg.MutedApps = loaded.MutedApps
+	cfg.Rooms = loaded.Rooms
+	cfg.AutoJoin, cfg.AutoShare, cfg.AutoVoice, cfg.AutoMuted = loaded.AutoJoin, loaded.AutoShare, loaded.AutoVoice, loaded.AutoMuted
+	cfg.Diagnose = loaded.Diagnose
+	cfg.OverlayX, cfg.OverlayY, cfg.OverlaySet = loaded.OverlayX, loaded.OverlayY, loaded.OverlaySet
 	return cfg
 }
 
+// Save schreibt die Einstellungen – nur für den eigenen Benutzer lesbar,
+// denn darin stehen die Schlüssel gemerkter Räume.
 func (c Config) Save() error {
-	c.normalize()
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(Path(), data, 0o644)
+	return os.WriteFile(Path(), data, 0o600)
 }
 
-// Validate prüft die wichtigsten Werte, bevor gespeichert oder gestreamt wird.
+// Validate prüft die Werte, bevor gespeichert wird.
 func (c *Config) Validate() error {
-	c.normalize()
-	switch c.Reach {
-	case ReachInternet, ReachLAN:
-	case ReachServer:
-		if c.Server == "" || IsLocalServer(c.Server) {
-			return fmt.Errorf("Adresse des eigenen Servers fehlt")
-		}
-	default:
-		return fmt.Errorf("unbekannte Erreichbarkeit: %q", c.Reach)
+	c.Name = strings.TrimSpace(c.Name)
+	if c.Name == "" {
+		return fmt.Errorf("Name fehlt")
 	}
-	if !roomPattern.MatchString(c.Room) {
-		return fmt.Errorf("Raumcode muss 2–32 Zeichen haben: a–z, 0–9 und -")
+	if r := []rune(c.Name); len(r) > 32 {
+		c.Name = string(r[:32])
 	}
-	if c.FPS < 1 || c.FPS > 60 {
-		return fmt.Errorf("FPS muss zwischen 1 und 60 liegen")
+	if c.Reach != ReachLAN {
+		c.Reach = ReachInternet
 	}
-	if c.Quality < 20 || c.Quality > 95 {
-		return fmt.Errorf("Qualität muss zwischen 20 und 95 liegen")
+	if c.FPS < 5 || c.FPS > 120 {
+		return fmt.Errorf("Bilder pro Sekunde: 5 bis 120")
 	}
 	if c.Bitrate < 500 || c.Bitrate > 50000 {
-		return fmt.Errorf("Bitrate muss zwischen 500 und 50000 kbit/s liegen")
-	}
-	if c.VideoMode != "auto" && c.VideoMode != "jpeg" {
-		return fmt.Errorf("unbekannter Videomodus: %q", c.VideoMode)
-	}
-	if c.MaxWidth < 0 || c.MaxWidth > 3840 {
-		return fmt.Errorf("maximale Breite muss zwischen 0 und 3840 liegen")
-	}
-	switch c.Target.Kind {
-	case "screen", "monitor", "window", "region", "test":
-	default:
-		return fmt.Errorf("unbekanntes Ziel: %q", c.Target.Kind)
+		return fmt.Errorf("Datenrate: 500 bis 50000 kbit/s")
 	}
 	return nil
 }
 
-// IsLocalServer erkennt Adressen, die auf diesen Rechner zeigen.
-func IsLocalServer(server string) bool {
-	s := strings.ToLower(strings.TrimSpace(server))
-	if s == "" {
-		return true
+// Room sucht einen gemerkten Raum.
+func (c Config) Room(id string) (SavedRoom, bool) {
+	for _, r := range c.Rooms {
+		if r.ID == id {
+			return r, true
+		}
 	}
-	s = strings.TrimPrefix(strings.TrimPrefix(s, "http://"), "https://")
-	host := s
-	if i := strings.IndexAny(host, ":/"); i >= 0 {
-		host = host[:i]
-	}
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" || host == ""
-}
-
-func (c *Config) normalize() {
-	c.Room = strings.ToLower(strings.TrimSpace(c.Room))
-	c.Server = strings.TrimRight(strings.TrimSpace(c.Server), "/")
-	if c.Name == "" {
-		c.Name = "PC"
-	}
+	return SavedRoom{}, false
 }

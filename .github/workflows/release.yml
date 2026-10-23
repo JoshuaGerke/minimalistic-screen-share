@@ -27,8 +27,6 @@ jobs:
           # Windows (amd64)
           mkdir -p dist/windows
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS} -H=windowsgui" -o dist/windows/mss-share.exe ./cmd/share
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/windows/mss-relay.exe ./cmd/relay
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/windows/mss-viewer.exe ./cmd/viewer
           sed -i "s/\$Version *= *\"[^\"]*\"/\$Version    = \"${VERSION}\"/" install.ps1
           cp install.ps1 uninstall.ps1 README.md LICENSE dist/windows/
           (cd dist/windows && zip -qr "../minimalistic-screen-share_${VERSION}_windows_amd64.zip" .)
@@ -39,8 +37,6 @@ jobs:
           for ARCH in amd64 arm64; do
             mkdir -p "dist/linux-${ARCH}"
             CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build -trimpath -ldflags "${LDFLAGS}" -o "dist/linux-${ARCH}/mss-share" ./cmd/share
-            CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build -trimpath -ldflags "${LDFLAGS}" -o "dist/linux-${ARCH}/mss-relay" ./cmd/relay
-            CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build -trimpath -ldflags "${LDFLAGS}" -o "dist/linux-${ARCH}/mss-viewer" ./cmd/viewer
             cp install.sh uninstall.sh README.md LICENSE "dist/linux-${ARCH}/"
             (cd "dist/linux-${ARCH}" && tar czf "../minimalistic-screen-share_${VERSION}_linux_${ARCH}.tar.gz" .)
           done

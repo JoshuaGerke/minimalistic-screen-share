@@ -24,7 +24,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 	room := fmt.Sprintf("test-%d", time.Now().UnixNano())
 	want := "https://beispiel-" + room + ".trycloudflare.com"
-	if err := Publish(context.Background(), room, want); err != nil {
+	if _, err := Publish(context.Background(), room, want); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(1500 * time.Millisecond) // ntfy speichert leicht verzögert
