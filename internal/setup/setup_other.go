@@ -9,8 +9,8 @@ import (
 )
 
 // Unter Linux übernimmt install.sh bzw. das PKGBUILD das Installieren.
-func Needed() bool                   { return false }
-func Install(logg *log.Logger) error { return errors.New("nur unter Windows") }
+func Needed() bool                               { return false }
+func Install(logg *log.Logger, quiet bool) error { return errors.New("nur unter Windows") }
 
 func Uninstall() error {
 	StopRunning()

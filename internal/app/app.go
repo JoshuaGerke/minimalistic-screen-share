@@ -21,6 +21,7 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/server"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/stream"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/tunnel"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/update"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/version"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/video"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/web"
@@ -68,6 +69,7 @@ type StatusView struct {
 	CanAutorun  bool          `json:"can_autostart"`
 	Stream      stream.Status `json:"stream"`
 	TargetLabel string        `json:"target_label"`
+	Update      update.Info   `json:"update"`
 	// Sprachkanal: Adresse und Schlüssel fürs Panel (nur während des Teilens).
 	VoiceURL string `json:"voice_url,omitempty"`
 	VoiceKey string `json:"voice_key,omitempty"`
@@ -202,6 +204,7 @@ func (a *App) Status() StatusView {
 		CanAutorun:  true,
 		Stream:      a.last,
 		TargetLabel: a.cfg.Target.Label(),
+		Update:      update.Status(),
 	}
 	if a.sess != nil {
 		view.Stream = a.sess.Status()
@@ -344,6 +347,21 @@ func (a *App) voiceURLLocked() string {
 		return ""
 	}
 	return u
+}
+
+// ApplyUpdate spielt die neueste Version ein und startet neu.
+func (a *App) ApplyUpdate() {
+	go func() {
+		restart, err := update.Apply(a.log, true)
+		if err != nil {
+			a.log.Printf("Update: %v", err)
+			return
+		}
+		if restart && update.Restart() == nil {
+			a.Quit()
+		}
+		// Windows: Die neue exe beendet diese App selbst über /api/quit.
+	}()
 }
 
 // resolveTarget macht aus "primary" (Panel: „Bildschirm“) den echten
@@ -527,6 +545,9 @@ func (a *App) Serve() error {
 	// ffmpeg suchen/laden und Encoder testen, bevor jemand auf Start drückt.
 	go video.Prepare(a.log)
 	go a.diagLoop()
+	go update.Watch(a.log, func(info update.Info) {
+		a.notify("Update verfügbar", "Version "+info.Latest+" ist da – im Fenster auf „Jetzt aktualisieren“ klicken.")
+	})
 	overlay.SetPositionStore(func() (int, int, bool) {
 		c := a.Config()
 		return c.OverlayX, c.OverlayY, c.OverlaySet

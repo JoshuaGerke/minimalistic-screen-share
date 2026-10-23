@@ -14,7 +14,7 @@ sudo pacman -S wf-recorder grim slurp libpulse wl-clipboard   # Video, Bild, Ton
 mss-share --settings
 ```
 
-**Update:** Neue exe herunterladen und doppelklicken – die alte Version wird beendet, ersetzt und neu gestartet.
+**Updates:** Die App schaut selbst nach neuen Versionen. Gibt es eine, steht oben im Fenster **„Version … ist da“** – auf **Jetzt aktualisieren** klicken, ein paar Sekunden warten, fertig. Alternativ im Startmenü bzw. Anwendungsmenü **„Minimalistic Screen Share aktualisieren“** starten, oder im Terminal `mss-share --update`.
 
 ## 2. Teilen
 

@@ -2,4 +2,4 @@
 // überschreibt sie beim Bauen über -ldflags mit der Tag-Version.
 package version
 
-var Version = "0.7.0"
+var Version = "0.7.1"

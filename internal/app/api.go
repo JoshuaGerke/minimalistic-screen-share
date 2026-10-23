@@ -34,6 +34,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/api/overlay", a.handleOverlay)
 	mux.HandleFunc("/api/overlay/state", a.handleOverlayState)
 	mux.HandleFunc("/api/openlog", a.localOnly(a.handleOpenLog))
+	mux.HandleFunc("/api/update", a.localOnly(a.handleUpdate))
 	mux.HandleFunc("/api/audiosessions", a.localOnly(a.handleAudioSessions))
 	mux.HandleFunc("/api/openmixer", a.localOnly(a.handleOpenMixer))
 	mux.Handle("/", hostIndex(web.FS()))
@@ -272,6 +273,16 @@ func (a *App) handleOverlayState(w http.ResponseWriter, r *http.Request) {
 	}
 	overlay.Update(st)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleUpdate spielt die neueste Version ein (POST).
+func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	a.ApplyUpdate()
+	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 
 // handleOpenLog öffnet die Logdatei im Standard-Editor.

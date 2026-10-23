@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,10 +14,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/app"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
@@ -25,6 +28,7 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/single"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/stream"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/tray"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/update"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/version"
 )
 
@@ -76,6 +80,8 @@ func main() {
 		background   = flag.Bool("background", false, "still starten (Autostart), kein Panel")
 		portable     = flag.Bool("portable", false, "nicht installieren, direkt aus diesem Ordner laufen")
 		diagnose     = flag.Bool("diag", false, "Diagnosemodus: Leistungsdaten alle 2 s ins Log")
+		doUpdate     = flag.Bool("update", false, "auf die neueste Version aktualisieren")
+		fromUpdate   = flag.Bool("from-update", false, "intern: neue Version spielt sich nach dem Download ein")
 	)
 	flag.Parse()
 
@@ -121,8 +127,12 @@ func main() {
 	}
 	// Doppelklick auf die heruntergeladene exe: erst installieren, dann
 	// startet die installierte Kopie. Klappt das nicht, läuft sie portabel.
+	if *doUpdate {
+		runUpdate(logger)
+		return
+	}
 	if !*portable && !*streamNow && setup.Needed() {
-		if err := setup.Install(logger); err == nil {
+		if err := setup.Install(logger, *fromUpdate); err == nil {
 			return
 		} else {
 			logger.Printf("Installation: %v – laufe portabel", err)
@@ -318,6 +328,57 @@ func runHeadless(logger *log.Logger, cfg config.Config) error {
 	return nil
 }
 
+/* ---------- Update von der Kommandozeile ---------- */
+
+// runUpdate holt die neueste Version (auch für den Desktop-Eintrag
+// "Screen Share aktualisieren").
+func runUpdate(logger *log.Logger) {
+	var last string
+	say := func(f string, a ...any) {
+		last = fmt.Sprintf(f, a...)
+		fmt.Println(last)
+		logger.Println(last)
+	}
+	done := false
+	defer func() {
+		if runtime.GOOS == "windows" {
+			// Die exe hat unter Windows keine Konsole. Nach erfolgreichem
+			// Download sofort raus – sonst ist die Datei gesperrt und die neue
+			// Version kann sie nicht ersetzen. Sie öffnet dann ihr Fenster.
+			if !done {
+				setup.Message(last)
+			}
+		} else {
+			time.Sleep(3 * time.Second) // Terminalfenster nicht sofort schließen
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	info, err := update.Check(ctx)
+	cancel()
+	if err != nil {
+		say("Update-Prüfung fehlgeschlagen: %v", err)
+		return
+	}
+	if !info.Available {
+		say("Schon aktuell (Version %s).", info.Current)
+		return
+	}
+	say("Aktualisiere %s → %s …", info.Current, info.Latest)
+	restart, err := update.Apply(logger, false)
+	if err != nil {
+		say("Update fehlgeschlagen: %v", err)
+		return
+	}
+	if restart {
+		// Linux: laufende App beenden, neue Version still starten.
+		if setup.StopRunning() {
+			update.Restart()
+		}
+	}
+	done = runtime.GOOS == "windows"
+	say("Fertig – Version %s.", info.Latest)
+}
+
 /* ---------- Tray-Betrieb ---------- */
 
 func runTray(logger *log.Logger, cfg config.Config, settingsOnly, welcome, background bool) {
@@ -332,9 +393,18 @@ func runTray(logger *log.Logger, cfg config.Config, settingsOnly, welcome, backg
 		}
 	}
 	first, err := single.Acquire()
+	// Nach einem Update startet die neue Version, während die alte noch
+	// herunterfährt – kurz warten statt aufzugeben.
+	for i := 0; background && err == nil && !first && i < 20; i++ {
+		time.Sleep(250 * time.Millisecond)
+		first, err = single.Acquire()
+	}
 	if err != nil {
 		logger.Printf("Einzelinstanz-Prüfung: %v", err)
 	} else if !first {
+		if background {
+			return
+		}
 		if !openExistingPanel() {
 			logger.Println("Client läuft schon, Panel war nicht erreichbar")
 		}

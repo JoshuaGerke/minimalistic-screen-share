@@ -42,6 +42,7 @@ for b in mss-share mss-relay mss-viewer; do
 done
 
 for f in "$APP_DIR/minimalistic-screen-share.desktop" \
+         "$APP_DIR/minimalistic-screen-share-update.desktop" \
          "$AUTO_DIR/minimalistic-screen-share.desktop"; do
 	if [ -e "$f" ]; then
 		rm -f "$f"

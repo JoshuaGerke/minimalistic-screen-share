@@ -32,6 +32,10 @@ func InstallDir() string {
 
 func installedExe() string { return filepath.Join(InstallDir(), "mss-share.exe") }
 
+func updateShortcutPath() string {
+	return filepath.Join(os.Getenv("APPDATA"), `Microsoft\Windows\Start Menu\Programs`, appName+" aktualisieren.lnk")
+}
+
 func shortcutPath() string {
 	return filepath.Join(os.Getenv("APPDATA"), `Microsoft\Windows\Start Menu\Programs`, appName+".lnk")
 }
@@ -52,7 +56,7 @@ func Needed() bool {
 // und den Eintrag unter "Apps" an und startet die installierte Kopie. Eine
 // laufende ältere Version wird vorher beendet – so ist ein Update einfach
 // "neue exe doppelklicken".
-func Install(logg *log.Logger) error {
+func Install(logg *log.Logger, quiet bool) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -62,7 +66,10 @@ func Install(logg *log.Logger) error {
 	if err := copyFile(exe, dst); err != nil {
 		return fmt.Errorf("kopieren nach %s: %w", dst, err)
 	}
-	if err := createShortcut(shortcutPath(), dst); err != nil {
+	if err := createShortcut(updateShortcutPath(), dst, "--update"); err != nil {
+		logg.Printf("Startmenü-Eintrag zum Aktualisieren: %v", err)
+	}
+	if err := createShortcut(shortcutPath(), dst, ""); err != nil {
 		logg.Printf("Startmenü-Eintrag: %v", err)
 	}
 	if err := registerUninstall(dst); err != nil {
@@ -76,15 +83,19 @@ func Install(logg *log.Logger) error {
 		k.Close()
 	}
 	logg.Printf("Installiert nach %s (Version %s)", dst, version.Version)
+	// Nach einem Update per Knopf still weiterlaufen, sonst Fenster zeigen.
+	if quiet {
+		return exec.Command(dst, "--background").Start()
+	}
 	return exec.Command(dst, "--welcome").Start()
 }
 
 // createShortcut legt die .lnk über die Windows-Shell an – PowerShell ist
 // auf jedem Windows da und spart eine COM-Anbindung.
-func createShortcut(lnk, target string) error {
+func createShortcut(lnk, target, args string) error {
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
-	script := fmt.Sprintf("$s=(New-Object -ComObject WScript.Shell).CreateShortcut(%s);$s.TargetPath=%s;$s.WorkingDirectory=%s;$s.Description='Bildschirm und Ton teilen';$s.Save()",
-		q(lnk), q(target), q(filepath.Dir(target)))
+	script := fmt.Sprintf("$s=(New-Object -ComObject WScript.Shell).CreateShortcut(%s);$s.TargetPath=%s;$s.WorkingDirectory=%s;$s.Arguments=%s;$s.Description='Bildschirm und Ton teilen';$s.Save()",
+		q(lnk), q(target), q(filepath.Dir(target)), q(args))
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	return cmd.Run()
@@ -115,6 +126,7 @@ func registerUninstall(exe string) error {
 func Uninstall() error {
 	StopRunning()
 	os.Remove(shortcutPath())
+	os.Remove(updateShortcutPath())
 	os.Remove(filepath.Join(os.Getenv("APPDATA"), `Microsoft\Windows\Start Menu\Programs\Startup`, appName+".lnk"))
 	if k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.SET_VALUE); err == nil {
 		k.DeleteValue(runValue)

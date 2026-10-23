@@ -143,6 +143,17 @@ Categories=Network;AudioVideo;Utility;
 Keywords=screenshare;streaming;screen;discord;
 StartupNotify=false
 EOF
+cat > "$APP_DIR/minimalistic-screen-share-update.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Minimalistic Screen Share aktualisieren
+Comment=Holt die neueste Version und startet die App neu
+Exec=$BIN_DIR/mss-share --update
+Icon=system-software-update
+Terminal=true
+Categories=Network;AudioVideo;Utility;
+Keywords=update;aktualisieren;screenshare;
+EOF
 
 if [ "$AUTOSTART" -eq 1 ]; then
 	schritt "Richte Autostart ein"

@@ -335,6 +335,7 @@
     document.title = (pending.length ? `(${pending.length}) Anfrage – ` : (s.state === 'live' && st.streaming ? '● ' : '')) + 'minimalistic screen share';
 
     renderRequests(pending);
+    renderUpdate(st.update || {});
     renderLink();
     renderLive(s);
     renderViewers(s);
@@ -526,6 +527,33 @@
       box.appendChild(row);
     }
   }
+
+  /* ---------- Update ---------- */
+
+  let firstVersion = '';
+  let updateClicked = false;
+  function renderUpdate(u) {
+    // Neue Version läuft: Seite neu laden, damit auch das Fenster neu ist.
+    if (!firstVersion) firstVersion = st.version;
+    if (st.version !== firstVersion) { location.reload(); return; }
+    const card = $('#update-card');
+    const busy = u.applying || updateClicked;
+    card.classList.toggle('hidden', !u.available && !busy && !u.error);
+    $('#update-title').textContent = busy ? 'Wird aktualisiert…' : (u.error ? 'Update hat nicht geklappt' : `Version ${u.latest} ist da`);
+    $('#update-sub').textContent = busy
+      ? 'Lädt die neue Version, die App startet gleich neu. Das Fenster lädt sich dann von selbst neu.'
+      : (u.error || `Du hast ${u.current}. Dauert nur ein paar Sekunden, ein laufender Stream startet danach neu.`);
+    $('#btn-update').disabled = busy;
+    $('#btn-update').textContent = u.error ? 'Noch mal versuchen' : 'Jetzt aktualisieren';
+    $('#update-notes').href = u.notes_url || '#';
+    $('#update-notes').classList.toggle('hidden', !u.notes_url || busy);
+  }
+
+  $('#btn-update').addEventListener('click', async () => {
+    updateClicked = true;
+    renderUpdate(st.update || {});
+    await api('/api/update', {}).catch((e) => toast(e.message));
+  });
 
   /* ---------- Sprachkanal ---------- */
 
