@@ -83,6 +83,11 @@
     <div class="viewers" id="viewers" style="margin-top:12px"></div>
   </section>
 
+  <section class="card">
+    <h2>Sprachkanal</h2>
+    <div id="voice"></div>
+  </section>
+
   <section class="card" id="settings">
     <h2>Einstellungen</h2>
     <div class="settings-grid">
@@ -193,6 +198,14 @@
         <input type="checkbox" id="cfg-autostart">
         <span class="label"><b>Beim Anmelden starten</b><span>Sitzt dann still im Infobereich bereit</span></span>
       </label>
+      <div></div>
+      <label class="switch">
+        <input type="checkbox" id="cfg-diagnose">
+        <span class="label"><b>Diagnosemodus</b><span>Schreibt alle 2 s CPU-, Grafikkarten- und Stream-Werte ins Log – zum Aufspüren von Rucklern</span></span>
+      </label>
+      <div class="field">
+        <button class="btn ghost" id="btn-openlog" type="button">Log öffnen</button>
+      </div>
     </div>
     <p class="link-note" id="save-hint"></p>
   </section>
@@ -200,6 +213,9 @@
   <p class="foot" id="foot"></p>
 </div>
 
+<script src="/audio-core.js"></script>
+<script src="/voice.js"></script>
+<script src="/overlay.js"></script>
 <script src="/host.js"></script>
 </body>
 </html>

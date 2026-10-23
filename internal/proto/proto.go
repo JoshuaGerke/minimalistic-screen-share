@@ -15,7 +15,21 @@ const (
 	// MsgVideoChunk ist ein Stück einer H.264-Zugriffseinheit (Annex B).
 	// Aufbau wie MsgFrameChunk, statt Breite steht dort 1 für Keyframes.
 	MsgVideoChunk byte = 0x05
+	// MsgVoice ist ein Opus-Paket aus dem Sprachkanal:
+	// Typ + Sprecher-ID (setzt der Relay) + Folgenummer + Opus-Daten.
+	MsgVoice byte = 0x06
 )
+
+// VoiceHeaderLen ist die Länge des Sprachpaket-Kopfs.
+const VoiceHeaderLen = 9
+
+// VoiceMember ist ein Teilnehmer im Sprachkanal.
+type VoiceMember struct {
+	ID    uint64 `json:"id"`
+	Name  string `json:"name"`
+	Muted bool   `json:"muted,omitempty"`
+	Deaf  bool   `json:"deaf,omitempty"`
+}
 
 const (
 	FrameHeaderLen = 13 // Typ + Seq + Zeit + Breite + Höhe
@@ -48,6 +62,9 @@ type Control struct {
 	// Video ist "h264" oder "jpeg", Codec der WebCodecs-Name (avc1.64002a).
 	Video string `json:"video,omitempty"`
 	Codec string `json:"codec,omitempty"`
+	// Sprachkanal
+	Deaf    bool          `json:"deaf,omitempty"`
+	Members []VoiceMember `json:"members,omitempty"`
 }
 
 // FramePacket baut ein Binärpaket mit einem JPEG-Frame.

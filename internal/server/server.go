@@ -69,6 +69,10 @@ type room struct {
 	// es nachgereicht und sehen sofort ein Bild statt bis zu 2 s zu warten.
 	gop      [][]byte
 	gopBytes int
+	// Sprachkanal: Teilnehmer, verbundene Host-Panels und deren Schlüssel.
+	voice    map[*client]struct{}
+	panels   map[*client]struct{}
+	voiceKey string
 }
 
 // stickyTypes sind Steuernachrichten, die neue Zuschauer nachgereicht bekommen.
@@ -82,11 +86,13 @@ type client struct {
 	// needKey: Es ist Video verloren gegangen (oder der Zuschauer ist neu) –
 	// bis zum nächsten Keyframe nichts schicken, was er nicht dekodieren kann.
 	needKey bool
-	role    string
-	name    string
-	room    *room
-	id      uint64
-	token   string
+	// Sprachkanal-Zustand (geschützt durch Server.mu)
+	voiceMuted, voiceDeaf bool
+	role                  string
+	name                  string
+	room                  *room
+	id                    uint64
+	token                 string
 
 	mu     sync.Mutex
 	closed bool
@@ -160,7 +166,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		c.fail("Ungültiger Raumcode")
 		return
 	}
-	if join.Role != "host" && join.Role != "viewer" {
+	if join.Role != "host" && join.Role != "viewer" && join.Role != "voice" {
 		c.fail("Unbekannte Rolle")
 		return
 	}
@@ -198,6 +204,8 @@ func (s *Server) join(c *client, code string) error {
 				code:    code,
 				viewers: map[*client]struct{}{},
 				pending: map[*client]struct{}{},
+				voice:   map[*client]struct{}{},
+				panels:  map[*client]struct{}{},
 			}
 			s.rooms[code] = rm
 		}
@@ -231,6 +239,12 @@ func (s *Server) join(c *client, code string) error {
 		return nil
 	}
 
+	if c.role == "voice" {
+		if !s.joinPanelLocked(c, rm) {
+			return errors.New("Sprachkanal: kein Zugang")
+		}
+		return nil
+	}
 	if rm == nil {
 		return errors.New("Stream nicht gefunden – läuft er noch?")
 	}
@@ -286,6 +300,7 @@ func (s *Server) leave(c *client) {
 		c.close()
 		return
 	}
+	s.leaveVoiceLocked(rm, c)
 	if c.role == "host" && rm.host == c {
 		rm.host = nil
 		s.notifyLocked(rm, proto.Control{T: "reconnecting"})
@@ -350,6 +365,11 @@ func (s *Server) closeRoom(rm *room) {
 	for p := range rm.pending {
 		all = append(all, p)
 	}
+	for p := range rm.panels {
+		all = append(all, p)
+	}
+	rm.voice = map[*client]struct{}{}
+	rm.panels = map[*client]struct{}{}
 	s.log.Printf("Raum %q: %d Teilnehmer werden informiert", rm.code, len(all))
 	rm.viewers = map[*client]struct{}{}
 	rm.pending = map[*client]struct{}{}
@@ -412,6 +432,9 @@ func (s *Server) admitLocked(rm *room, c *client) {
 	}
 	for _, msg := range rm.gop {
 		c.enqueue(msg, false)
+	}
+	if len(rm.voice) > 0 {
+		c.enqueueControl(rm.voiceRoster())
 	}
 }
 
@@ -559,7 +582,9 @@ func (c *client) readLoop() {
 		}
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		if mt == websocket.BinaryMessage {
-			if c.role == "host" {
+			if len(data) > 0 && data[0] == proto.MsgVoice {
+				c.srv.relayVoice(c, data)
+			} else if c.role == "host" {
 				c.srv.relayBinary(c, data)
 			}
 			continue
@@ -589,6 +614,14 @@ func (c *client) readLoop() {
 			if c.role == "host" {
 				c.srv.endRoomNow(c)
 			}
+		case "voicekey":
+			if c.role == "host" {
+				c.srv.setVoiceKey(c, ctl.Token)
+			}
+		case "voice-join":
+			c.srv.voiceJoin(c, ctl.On)
+		case "voice-state":
+			c.srv.voiceState(c, ctl.On, ctl.Deaf)
 		default:
 			if c.role == "host" {
 				c.srv.relayControl(c, ctl.T, data)

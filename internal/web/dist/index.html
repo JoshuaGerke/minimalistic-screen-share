@@ -54,6 +54,9 @@
       <button id="btn-pip" class="btn icon" type="button" title="Bild-in-Bild – schwebt über deinen anderen Fenstern (P)" aria-label="Bild in Bild">
         <svg viewBox="0 0 24 24" width="19" height="19"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor"/></svg>
       </button>
+      <button id="btn-voice" class="btn icon" type="button" title="Sprachkanal" aria-label="Sprachkanal">
+        <svg viewBox="0 0 24 24" width="19" height="19"><path d="M4 14v-2a8 8 0 0116 0v2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="13" width="4" height="7" rx="1.5" fill="currentColor"/><rect x="17" y="13" width="4" height="7" rx="1.5" fill="currentColor"/></svg>
+      </button>
       <button id="btn-stats" class="btn icon" type="button" title="Verbindungsdaten (I)" aria-label="Verbindungsdaten">
         <svg viewBox="0 0 24 24" width="19" height="19"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 11v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/></svg>
       </button>
@@ -75,6 +78,11 @@
 
   <button id="audio-hint" class="audio-hint hidden" type="button">Ton ist aus – hier klicken zum Einschalten</button>
 
+  <div id="voice-drawer" class="card voice-drawer hidden">
+    <h2>Sprachkanal</h2>
+    <div id="voice"></div>
+  </div>
+
   <div id="stats-panel" class="stats-panel hidden">
     <span>Auflösung</span><b id="stat-res">–</b>
     <span>Bilder/s</span><b id="stat-fps">–</b>
@@ -87,6 +95,8 @@
 </div>
 
 <script src="/audio-core.js"></script>
+<script src="/voice.js"></script>
+<script src="/overlay.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -42,6 +42,41 @@ Link öffnen, Namen eingeben, **Zuschauen**. Mehr braucht es nicht – kein Prog
 - Alle Einstellungen gelten sofort, auch mitten im Stream – kein Neustart nötig.
 - Beide teilen gleichzeitig? Kein Problem: Jeder startet sein eigenes Teilen und schickt seinen Link.
 
+## Sprachkanal
+
+Reden wie bei Discord – direkt im Stream, ohne Extra-Programm:
+
+- **Wer streamt:** Im Fenster der App unter **Sprachkanal** auf **Beitreten** (geht, solange du teilst).
+- **Wer zuschaut:** Im Viewer oben rechts auf das **Headset-Symbol** → **Beitreten**.
+
+Der Browser fragt einmal nach dem Mikrofon. Wer spricht, bekommt einen grünen Ring. Stumm (`Strg+Umschalt+M`) und taub (`Strg+Umschalt+D`) gibt es neben dem Knopf, die Lautstärke jeder Person lässt sich einzeln regeln.
+
+Unter dem Regler-Symbol stecken die Einstellungen: Mikrofon und Ausgabe wählen, **Sprachaktivierung** mit Empfindlichkeit (der Balken zeigt live deinen Pegel, der gelbe Strich die Schwelle) oder **Push-to-Talk**, Mikrofon-Verstärkung, **Echo-Unterdrückung**, **Rauschunterdrückung**, **automatische Lautstärke**, **Stereo** und die **Bitrate** (Standard 128 kbit/s, bis 510 kbit/s).
+
+> Push-to-Talk wirkt, solange das Fenster der App bzw. der Viewer aktiv ist – im Spiel lieber Sprachaktivierung nehmen.
+
+### Overlay
+
+**Overlay** neben dem Beitreten-Knopf blendet die Teilnehmerliste über allen Fenstern ein – auch über Spielen, ohne ihnen den Fokus zu nehmen. Mit der Maus irgendwo anfassen und verschieben, die Position bleibt gespeichert. In den Spracheinstellungen: **Deckkraft**, **Größe**, **nur wer gerade spricht** und **Klicks durchlassen** (dann liegt es wie ein Aufkleber über dem Spiel und lässt sich nicht mehr verschieben).
+
+Unter Linux öffnet das Overlay ein schwebendes Browserfenster (Chrome, Brave). Unter Hyprland macht diese Zeile in `hyprland.conf` es durchsichtig, angepinnt und rahmenlos:
+
+```
+windowrule = float, pin, opacity 0.85, noborder, title:^(Sprachkanal)$
+```
+
+## Diagnosemodus (wenn etwas ruckelt)
+
+Im Fenster ganz unten unter **System** → **Diagnosemodus** einschalten (oder die App mit `mss-share --diag` starten). Dann schreibt die App alle 2 Sekunden eine Zeile ins Log: CPU-Last von App, Encoder, Ton, Tunnel, Compositor und Browser, die Auslastung jeder Grafikkarte, Systemlast, freien Speicher, Bilder pro Sekunde, Datenrate, Warteschlangen und Meldungen des Encoders. Beim Einschalten kommen einmal Kernel, Grafikkarten und Monitore (mit Hz) dazu.
+
+So schickst du es weiter: Diagnosemodus an, ein paar Minuten wie gewohnt teilen, bis es ruckelt, dann
+
+```bash
+tail -150 ~/.config/minimalistic-screen-share/share.log
+```
+
+(Windows: **Log öffnen** im Fenster) und die Ausgabe schicken.
+
 ## Bildeinstellungen
 
 Im Fenster unter **Einstellungen → Bild** gibt es vier Voreinstellungen:

@@ -169,12 +169,17 @@ registerProcessor('mss-player', MssPlayer);`;
 
   function silenced() { return audio.muted || selfGuard.pending || selfGuard.self; }
 
+  let localApp = { base: '', platform: '' }; // die App auf diesem PC, falls sie läuft
+
   async function checkSelf() {
     selfGuard.pending = true;
     applyVolume();
     const ask = (port) => fetch(`http://127.0.0.1:${port}/api/hello?room=${encodeURIComponent(room)}`,
       { cache: 'no-store', signal: AbortSignal.timeout(1500) })
-      .then((r) => r.json().then((d) => (d.self ? 'self' : 'app'), () => 'other'), () => 'none');
+      .then((r) => r.json().then((d) => {
+        localApp = { base: `http://127.0.0.1:${port}`, platform: d.platform || '' };
+        return d.self ? 'self' : 'app';
+      }, () => 'other'), () => 'none');
     // Die App nimmt den ersten freien Port ab 7777 und läuft nur einmal. Also
     // der Reihe nach fragen und bei der ersten Antwort (oder dem ersten
     // geschlossenen Port) aufhören – so landen keine Fehlerzeilen für leere
@@ -326,6 +331,11 @@ registerProcessor('mss-player', MssPlayer);`;
         if (state === 'live' || state === 'waiting' || state === 'paused') {
           setState(hostPaused ? 'paused' : (hasFrame ? 'live' : 'waiting'));
         }
+        break;
+      case 'voice':
+      case 'voice-you':
+        voice.onControl(m);
+        $('#btn-voice').classList.toggle('on', voice.state.joined);
         break;
       case 'viewers':
         viewers = m.n || 0;
@@ -492,6 +502,8 @@ registerProcessor('mss-player', MssPlayer);`;
       onPCM(new Uint8Array(buf, 9));
     } else if (type === 3) {
       onSilence();
+    } else if (type === 6) {
+      voice.onPacket(buf);
     }
   }
 
@@ -723,7 +735,28 @@ registerProcessor('mss-player', MssPlayer);`;
     connect();
   });
 
+  /* ---------- Sprachkanal ---------- */
+
+  const overlay = MssOverlay.create({ base: () => localApp.base || null, platform: () => localApp.platform });
+  const voice = MssVoice.create({
+    send: (b) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(b); },
+    sendCtl: (o) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); },
+    canJoin: () => !selfGuard.self && !!ws && ws.readyState === WebSocket.OPEN && ['live', 'waiting', 'paused'].includes(state),
+    joinHint: () => (selfGuard.self
+      ? 'Du schaust auf dem PC zu, der streamt – nimm den Sprachkanal im Panel der App, sonst gibt es eine Rückkopplung.'
+      : 'Geht, sobald der Streamer dich reingelassen hat.'),
+    onChange: (v) => { overlay.publish(v.snapshot()); $('#btn-voice').classList.toggle('on', v.state.joined); },
+    onOverlay: (v) => overlay.toggle(v.snapshot()),
+  });
+  voice.mount($('#voice'));
+  window.mssVoice = voice; // zum Nachsehen in der Browser-Konsole
+  $('#btn-voice').addEventListener('click', () => {
+    $('#voice-drawer').classList.toggle('hidden');
+    voice.refresh();
+  });
+
   $('#btn-leave').addEventListener('click', () => {
+    voice.leave();
     wantConnect = false;
     cleanup();
     audioSend({ reset: true });

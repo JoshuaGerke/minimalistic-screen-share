@@ -75,6 +75,7 @@ func main() {
 		welcome      = flag.Bool("welcome", false, "nach der Installation: Panel öffnen")
 		background   = flag.Bool("background", false, "still starten (Autostart), kein Panel")
 		portable     = flag.Bool("portable", false, "nicht installieren, direkt aus diesem Ordner laufen")
+		diagnose     = flag.Bool("diag", false, "Diagnosemodus: Leistungsdaten alle 2 s ins Log")
 	)
 	flag.Parse()
 
@@ -147,6 +148,9 @@ func main() {
 	}
 	if *noAudio {
 		cfg.Audio = false
+	}
+	if *diagnose {
+		cfg.Diagnose = true
 	}
 	if *pattern {
 		cfg.Target = capture.Target{Kind: "test"}

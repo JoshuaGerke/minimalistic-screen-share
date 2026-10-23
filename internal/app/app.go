@@ -16,6 +16,8 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/audio"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/config"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/diag"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/overlay"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/server"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/stream"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/tunnel"
@@ -66,6 +68,9 @@ type StatusView struct {
 	CanAutorun  bool          `json:"can_autostart"`
 	Stream      stream.Status `json:"stream"`
 	TargetLabel string        `json:"target_label"`
+	// Sprachkanal: Adresse und Schlüssel fürs Panel (nur während des Teilens).
+	VoiceURL string `json:"voice_url,omitempty"`
+	VoiceKey string `json:"voice_key,omitempty"`
 }
 
 func New(log *log.Logger, cfg config.Config) *App {
@@ -109,6 +114,50 @@ func (a *App) SaveConfig(c config.Config) error {
 		a.applyReach()
 	}
 	return nil
+}
+
+// diagLoop schreibt im Diagnosemodus alle 2 s Leistungsdaten ins Log – so
+// sieht man hinterher genau, wann ein PC ins Stocken kam und warum.
+func (a *App) diagLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	var sampler diag.Sampler
+	active := false
+	lastStderr := ""
+	for range ticker.C {
+		if !a.Config().Diagnose {
+			if active {
+				a.log.Println("Diagnose: aus")
+			}
+			active = false
+			continue
+		}
+		if !active {
+			active = true
+			sampler = diag.Sampler{}
+			sampler.Sample()
+			a.log.Printf("Diagnose: an – Version %s, %s", version.Version, diag.SystemInfo())
+			continue
+		}
+		line := "Diagnose: " + sampler.Sample()
+		a.mu.Lock()
+		sess := a.sess
+		tunnel := a.tunnelURL != ""
+		a.mu.Unlock()
+		if sess != nil {
+			line += " | " + sess.DiagLine()
+			if e := sess.EncoderStderr(); e != "" && e != lastStderr {
+				lastStderr = e
+				a.log.Printf("Diagnose: Encoder meldet: %s", e)
+			}
+		} else {
+			line += " | kein Stream"
+		}
+		if a.Config().Reach == config.ReachInternet {
+			line += fmt.Sprintf(" | Tunnel %v", map[bool]string{true: "steht", false: "fehlt"}[tunnel])
+		}
+		a.log.Println(line)
+	}
 }
 
 // applyReach bringt Relay und Tunnel in den Zustand, den der Modus verlangt.
@@ -156,6 +205,8 @@ func (a *App) Status() StatusView {
 	}
 	if a.sess != nil {
 		view.Stream = a.sess.Status()
+		view.VoiceKey = a.sess.VoiceKey()
+		view.VoiceURL = a.voiceURLLocked()
 	}
 	return view
 }
@@ -277,6 +328,22 @@ func (a *App) Start(target capture.Target) error {
 	}
 	a.copyLinkIfReady()
 	return nil
+}
+
+// voiceURLLocked ist der WebSocket des Relays, über den das Panel spricht.
+func (a *App) voiceURLLocked() string {
+	srv := a.cfg.Server
+	if a.cfg.Reach != config.ReachServer {
+		if a.relayPort == 0 {
+			return ""
+		}
+		srv = fmt.Sprintf("http://127.0.0.1:%d", a.relayPort)
+	}
+	u, err := stream.WSURL(srv)
+	if err != nil {
+		return ""
+	}
+	return u
 }
 
 // resolveTarget macht aus "primary" (Panel: „Bildschirm“) den echten
@@ -459,6 +526,17 @@ func (a *App) Serve() error {
 	a.applyReach()
 	// ffmpeg suchen/laden und Encoder testen, bevor jemand auf Start drückt.
 	go video.Prepare(a.log)
+	go a.diagLoop()
+	overlay.SetPositionStore(func() (int, int, bool) {
+		c := a.Config()
+		return c.OverlayX, c.OverlayY, c.OverlaySet
+	}, func(x, y int) {
+		a.mu.Lock()
+		a.cfg.OverlayX, a.cfg.OverlayY, a.cfg.OverlaySet = x, y, true
+		c := a.cfg
+		a.mu.Unlock()
+		c.Save()
+	})
 	return nil
 }
 

@@ -5,12 +5,14 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/audio"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/config"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/overlay"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/web"
 )
 
@@ -29,6 +31,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/api/autostart", a.localOnly(a.handleAutostart))
 	mux.HandleFunc("/api/quit", a.localOnly(a.handleQuit))
 	mux.HandleFunc("/api/hello", a.handleHello)
+	mux.HandleFunc("/api/overlay", a.handleOverlay)
+	mux.HandleFunc("/api/overlay/state", a.handleOverlayState)
+	mux.HandleFunc("/api/openlog", a.localOnly(a.handleOpenLog))
 	mux.HandleFunc("/api/audiosessions", a.localOnly(a.handleAudioSessions))
 	mux.HandleFunc("/api/openmixer", a.localOnly(a.handleOpenMixer))
 	mux.Handle("/", hostIndex(web.FS()))
@@ -218,7 +223,65 @@ func (a *App) handleHello(w http.ResponseWriter, r *http.Request) {
 	}
 	room := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("room")))
 	cfg := a.Config()
-	writeJSON(w, http.StatusOK, map[string]bool{"self": a.Streaming() && room != "" && room == cfg.Room})
+	writeJSON(w, http.StatusOK, map[string]any{"self": a.Streaming() && room != "" && room == cfg.Room, "platform": platform()})
+}
+
+// openCORS erlaubt Aufrufe von jeder Seite – der Viewer läuft unter der
+// Tunnel-Adresse des Streamers, das Overlay aber auf diesem PC.
+func openCORS(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Private-Network", "true")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return false
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return false
+	}
+	return true
+}
+
+// handleOverlay blendet das Sprach-Overlay ein oder aus.
+func (a *App) handleOverlay(w http.ResponseWriter, r *http.Request) {
+	if !openCORS(w, r) {
+		return
+	}
+	on, ok := decodeOn(w, r)
+	if !ok {
+		return
+	}
+	if !overlay.Supported() {
+		writeError(w, http.StatusNotImplemented, "Overlay gibt es hier nur im Browser")
+		return
+	}
+	overlay.Show(on)
+	writeJSON(w, http.StatusOK, map[string]bool{"on": on})
+}
+
+// handleOverlayState nimmt den Zustand des Sprachkanals für das Overlay an.
+func (a *App) handleOverlayState(w http.ResponseWriter, r *http.Request) {
+	if !openCORS(w, r) {
+		return
+	}
+	var st overlay.State
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&st); err != nil {
+		writeError(w, http.StatusBadRequest, "ungültiger Zustand")
+		return
+	}
+	overlay.Update(st)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleOpenLog öffnet die Logdatei im Standard-Editor.
+func (a *App) handleOpenLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	openURL(filepath.Join(config.Dir(), "share.log"))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleQuit beendet die App – das nutzt eine neue Version beim Update.

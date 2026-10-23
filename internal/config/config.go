@@ -22,18 +22,23 @@ const (
 )
 
 type Config struct {
-	Reach      string         `json:"reach"`
-	Server     string         `json:"server"`
-	Room       string         `json:"room"`
-	Name       string         `json:"name"`
-	FPS        int            `json:"fps"`
-	Quality    int            `json:"quality"`
-	MaxWidth   int            `json:"max_width"`
-	Bitrate    int            `json:"bitrate"`    // kbit/s für H.264
-	VideoMode  string         `json:"video_mode"` // "auto" (H.264 per Grafikkarte) oder "jpeg"
-	Audio      bool           `json:"audio"`
-	AutoAccept bool           `json:"auto_accept"`
-	MutedApps  []string       `json:"muted_apps,omitempty"`
+	Reach      string   `json:"reach"`
+	Server     string   `json:"server"`
+	Room       string   `json:"room"`
+	Name       string   `json:"name"`
+	FPS        int      `json:"fps"`
+	Quality    int      `json:"quality"`
+	MaxWidth   int      `json:"max_width"`
+	Bitrate    int      `json:"bitrate"`    // kbit/s für H.264
+	VideoMode  string   `json:"video_mode"` // "auto" (H.264 per Grafikkarte) oder "jpeg"
+	Audio      bool     `json:"audio"`
+	AutoAccept bool     `json:"auto_accept"`
+	MutedApps  []string `json:"muted_apps,omitempty"`
+	Diagnose   bool     `json:"diagnose,omitempty"` // Leistungsdaten alle 2 s ins Log
+	// Position des Sprach-Overlays (nur gültig, wenn OverlaySet).
+	OverlayX   int            `json:"overlay_x,omitempty"`
+	OverlayY   int            `json:"overlay_y,omitempty"`
+	OverlaySet bool           `json:"overlay_set,omitempty"`
 	Target     capture.Target `json:"target"`
 }
 
@@ -158,6 +163,8 @@ func Load() Config {
 	cfg.Audio = loaded.Audio
 	cfg.AutoAccept = loaded.AutoAccept
 	cfg.MutedApps = loaded.MutedApps
+	cfg.Diagnose = loaded.Diagnose
+	cfg.OverlayX, cfg.OverlayY, cfg.OverlaySet = loaded.OverlayX, loaded.OverlayY, loaded.OverlaySet
 	if loaded.Target.Kind != "" {
 		cfg.Target = loaded.Target
 	}

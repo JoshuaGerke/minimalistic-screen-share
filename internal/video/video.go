@@ -65,6 +65,9 @@ func (e *Encoder) Err() error {
 	return e.err
 }
 
+// Stderr liefert die letzten Meldungen des Encoders (für den Diagnosemodus).
+func (e *Encoder) Stderr() string { return e.tail.String() }
+
 // Close beendet den Prozess.
 func (e *Encoder) Close() {
 	if e.cmd.Process != nil {

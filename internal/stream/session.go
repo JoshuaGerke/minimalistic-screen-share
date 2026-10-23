@@ -4,8 +4,10 @@ package stream
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +85,8 @@ type Session struct {
 	names    []string
 	onChange func(Status)
 	target   capture.Target
+	// voiceKey lässt das eigene Bedienpanel ohne Anklopfen in den Sprachkanal.
+	voiceKey string
 
 	stop    chan struct{}
 	stopped chan struct{}
@@ -111,6 +115,11 @@ type Session struct {
 	audioAvail atomic.Bool
 	audioRate  atomic.Int32
 	audioCh    atomic.Int32
+
+	// Diagnose: Sprünge zum Keyframe, längster Schreibvorgang, laufender Encoder.
+	skips    atomic.Int64
+	writeMax atomic.Int64 // Mikrosekunden, wird beim Auslesen zurückgesetzt
+	encoder  atomic.Pointer[video.Encoder]
 
 	viewers    atomic.Int32
 	frameCount atomic.Int64
@@ -182,11 +191,12 @@ func New(opts Options) *Session {
 		opts.Log = log.Default()
 	}
 	s := &Session{
-		opts:    opts,
-		log:     opts.Log,
-		stop:    make(chan struct{}),
-		stopped: make(chan struct{}),
-		target:  opts.Target,
+		opts:     opts,
+		log:      opts.Log,
+		stop:     make(chan struct{}),
+		stopped:  make(chan struct{}),
+		target:   opts.Target,
+		voiceKey: randomKey(),
 		status: Status{
 			State:  "connecting",
 			Target: opts.Target.Label(),
@@ -574,6 +584,7 @@ func (s *Session) connectAndStream() error {
 	// anderen raus (gilt auch nach Reconnects).
 	for _, c := range []proto.Control{
 		{T: "auto", On: s.autoAccept.Load()},
+		{T: "voicekey", Token: s.voiceKey},
 		s.metaMsg(),
 		{T: "pause", On: s.paused.Load()},
 	} {
@@ -633,8 +644,12 @@ func (s *Session) connectAndStream() error {
 func (s *Session) writeLoop(conn *websocket.Conn, ob *outbox, stop <-chan struct{}) error {
 	write := func(typ int, data []byte) error {
 		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		start := time.Now()
 		if err := conn.WriteMessage(typ, data); err != nil {
 			return err
+		}
+		if d := time.Since(start).Microseconds(); d > s.writeMax.Load() {
+			s.writeMax.Store(d)
 		}
 		s.byteCount.Add(int64(len(data)))
 		return nil
@@ -811,6 +826,7 @@ func (s *Session) h264Loop(ob *outbox, stop <-chan struct{}, gen int32) error {
 	check := time.NewTicker(200 * time.Millisecond)
 	defer check.Stop()
 	params := s.paramGen.Load()
+	s.setVideoLabel("H.264 (startet mit dem ersten Zuschauer)")
 	failures := 0
 	skipToKey := false
 	var lastWatched time.Time
@@ -839,6 +855,7 @@ func (s *Session) h264Loop(ob *outbox, stop <-chan struct{}, gen int32) error {
 				return err
 			}
 			s.setVideoLabel("H.264 · " + enc.Name)
+			s.encoder.Store(enc)
 			skipToKey = true
 		}
 		if !want && enc != nil {
@@ -873,8 +890,9 @@ func (s *Session) h264Loop(ob *outbox, stop <-chan struct{}, gen int32) error {
 			}
 			// Staut sich die Leitung, lieber bis zum nächsten Keyframe springen
 			// als Sekunden hinterherzuhinken.
-			if len(ob.video) > max(int(s.fps.Load())/2, 10) {
+			if len(ob.video) > max(int(s.fps.Load())/2, 10) && !skipToKey {
 				skipToKey = true
+				s.skips.Add(1)
 			}
 			if skipToKey {
 				if !u.Key {
@@ -988,6 +1006,40 @@ func (s *Session) jpegLoop(ob *outbox, stop <-chan struct{}, gen int32) error {
 		s.width.Store(int32(w))
 		s.height.Store(int32(h))
 	}
+}
+
+// VoiceKey ist der Schlüssel, mit dem das Panel dem Sprachkanal beitritt.
+func (s *Session) VoiceKey() string { return s.voiceKey }
+
+func randomKey() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// DiagLine fasst den Zustand des Streams für den Diagnosemodus zusammen.
+func (s *Session) DiagLine() string {
+	st := s.Status()
+	line := fmt.Sprintf("stream %s %s · %d fps · %d kbit/s · %d Zuschauer · Ping %d ms · Keyframe-Sprünge %d · längstes Senden %d ms",
+		st.State, st.Video, st.FPS, st.Kbps, st.Viewers, st.RTTms, s.skips.Load(), s.writeMax.Swap(0)/1000)
+	if ob := s.outboxNow(); ob != nil {
+		line += fmt.Sprintf(" · Warteschlange Video %d/%d Ton %d/%d", len(ob.video), cap(ob.video), len(ob.prio), cap(ob.prio))
+	}
+	if st.Paused {
+		line += " · pausiert"
+	}
+	if st.Err != "" {
+		line += " · Fehler: " + st.Err
+	}
+	return line
+}
+
+// EncoderStderr liefert die letzten Meldungen des laufenden Encoders.
+func (s *Session) EncoderStderr() string {
+	if e := s.encoder.Load(); e != nil {
+		return e.Stderr()
+	}
+	return ""
 }
 
 // captureFailed: Klappt die Aufnahme mehrmals hintereinander nicht, steht der

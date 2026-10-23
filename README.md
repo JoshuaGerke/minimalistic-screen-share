@@ -19,6 +19,9 @@ Discord kann Screensharing, aber 1080p gibt es nur mit Nitro, unter Linux ist Sy
 - **Alle Einstellungen live**: Bildrate (5–60), Datenrate, Mauszeiger, Ton – ohne Neustart. Vier Voreinstellungen von „Sparsam“ bis „Flüssig“.
 - **Ton ohne Knacken**: Ringpuffer mit durchgehender Umrechnung im AudioWorklet, passt sich an Netzschwankungen und Taktunterschiede der Soundkarten an. Bei engem Upload gehen Bilder verloren, nie der Ton.
 - **Rückkopplungsschutz**: Schaut man auf dem PC zu, der gerade streamt, bleibt der Viewer automatisch stumm.
+- **Sprachkanal wie Discord**: Opus in hoher Bitrate (bis 510 kbit/s, Stereo), Echo- und Rauschunterdrückung, automatische Lautstärke, Sprachaktivierung mit Pegelanzeige oder Push-to-Talk, stumm/taub, Lautstärke pro Person. Läuft im Browser (WebRTC-Audioverarbeitung + WebCodecs) über den Relay des Streams.
+- **Overlay**: schwebende Teilnehmerliste mit Sprech-Anzeige über allen Fenstern – unter Windows ein echtes halbtransparentes Fenster (verschiebbar, Deckkraft, Größe, Klicks durchlassen), sonst Bild-in-Bild des Browsers.
+- **Diagnosemodus**: Leistungsdaten (CPU je Prozess, GPU-Auslastung, Systemlast, Stream-Werte) alle 2 s ins Log – zum Aufspüren von Rucklern.
 - **Viewer** mit Lautstärke, Bild-in-Bild (schwebt über anderen Fenstern), Vollbild, Originalgröße 1:1, Verbindungsdaten und Tastenkürzeln. Hört der Streamer auf, verbindet sich der Viewer von selbst wieder, sobald er weitermacht.
 - **Pausiert automatisch, wenn niemand zuschaut** – spart CPU und Traffic. Unveränderte Bilder werden gar nicht erst verschickt.
 - **Ein Programm nicht mitstreamen** (z. B. Discord) – unter Windows hörst du es trotzdem weiter (Prozess-Loopback), unter Linux wird es beim Teilen stummgeschaltet. Autostart per Schalter.

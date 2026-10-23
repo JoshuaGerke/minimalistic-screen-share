@@ -92,6 +92,7 @@
     $('#quality-label').textContent = qualityText(cfg.quality || 70);
     $('#cfg-audio').checked = !!cfg.audio;
     $('#cfg-auto').checked = !!cfg.auto_accept;
+    $('#cfg-diagnose').checked = !!cfg.diagnose;
     $('#cfg-cursor').checked = cfg.target ? !!cfg.target.cursor : true;
     $('#cfg-name').value = cfg.name || '';
     $('#cfg-room').value = cfg.room || '';
@@ -186,6 +187,7 @@
       video_mode: $('#cfg-compat').checked ? 'jpeg' : 'auto',
       audio: $('#cfg-audio').checked,
       auto_accept: $('#cfg-auto').checked,
+      diagnose: $('#cfg-diagnose').checked,
       target: { ...(cfg.target || {}), cursor: $('#cfg-cursor').checked },
     };
     const hint = $('#save-hint');
@@ -205,7 +207,9 @@
   }
   $('#cfg-compat').addEventListener('change', syncCompat);
 
-  for (const id of ['#cfg-fps', '#cfg-bitrate', '#cfg-compat', '#cfg-width', '#cfg-audio', '#cfg-auto', '#cfg-room', '#cfg-name', '#cfg-server']) {
+  $('#btn-openlog').addEventListener('click', () => api('/api/openlog', {}).catch(() => {}));
+
+  for (const id of ['#cfg-diagnose', '#cfg-fps', '#cfg-bitrate', '#cfg-compat', '#cfg-width', '#cfg-audio', '#cfg-auto', '#cfg-room', '#cfg-name', '#cfg-server']) {
     $(id).addEventListener('change', scheduleSave);
   }
   $('#cfg-quality').addEventListener('input', () => {
@@ -336,6 +340,7 @@
     renderViewers(s);
     $('#cfg-autostart').checked = !!st.autostart;
     pollAudioSources();
+    syncVoiceConn();
     if (s.state === 'error' && s.error) showError(s.error);
     else if (st.streaming && s.error) showError(s.error);
   }
@@ -520,6 +525,62 @@
       row.append(cb, text);
       box.appendChild(row);
     }
+  }
+
+  /* ---------- Sprachkanal ---------- */
+
+  // Das Panel verbindet sich während des Teilens mit dem eigenen Relay –
+  // mit dem Schlüssel der Sitzung, ohne Anklopfen.
+  let voiceWS = null, voiceKey = '';
+  const voiceOpen = () => voiceWS && voiceWS.readyState === WebSocket.OPEN;
+  const overlay = MssOverlay.create({ base: '', platform: () => st.platform });
+  const voice = MssVoice.create({
+    send: (buf) => { if (voiceOpen()) voiceWS.send(buf); },
+    sendCtl: (o) => { if (voiceOpen()) voiceWS.send(JSON.stringify(o)); },
+    canJoin: () => !!(st.streaming && voiceOpen()),
+    joinHint: () => (st.streaming ? 'Verbinde mit dem Sprachkanal…' : 'Starte zuerst das Teilen – der Sprachkanal gehört zu deiner Sitzung.'),
+    onChange: (v) => overlay.publish(v.snapshot()),
+    onOverlay: (v) => overlay.toggle(v.snapshot()),
+  });
+  voice.mount($('#voice'));
+  window.mssVoice = voice; // zum Nachsehen in der Browser-Konsole
+
+  function syncVoiceConn() {
+    const want = st.streaming && st.voice_url && st.voice_key;
+    if (!want) {
+      if (voiceWS) {
+        voice.leave();
+        voiceWS.close();
+        voiceWS = null;
+        voiceKey = '';
+      }
+      voice.refresh();
+      return;
+    }
+    if (voiceWS && voiceKey === st.voice_key && voiceWS.readyState <= WebSocket.OPEN) return;
+    if (voiceWS) voiceWS.close();
+    voiceKey = st.voice_key;
+    const ws = new WebSocket(st.voice_url);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ t: 'join', role: 'voice', room: st.room, name: cfg.name || 'Host', token: st.voice_key }));
+      voice.refresh();
+    };
+    ws.onmessage = (e) => {
+      if (typeof e.data === 'string') {
+        try { voice.onControl(JSON.parse(e.data)); } catch (err) { /* egal */ }
+      } else if (new Uint8Array(e.data)[0] === 6) {
+        voice.onPacket(e.data);
+      }
+    };
+    ws.onclose = () => {
+      if (voiceWS !== ws) return;
+      voiceWS = null;
+      voiceKey = '';
+      voice.leave();
+      voice.refresh();
+    };
+    voiceWS = ws;
   }
 
   /* ---------- Start ---------- */
