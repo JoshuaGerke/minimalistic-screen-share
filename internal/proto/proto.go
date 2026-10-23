@@ -18,6 +18,9 @@ const (
 	// MsgVoice ist ein Opus-Paket aus dem Sprachkanal:
 	// Typ + Sprecher-ID (setzt der Relay) + Folgenummer + Opus-Daten.
 	MsgVoice byte = 0x06
+	// MsgSourced verpackt Bild/Ton eines weiteren Teilenden in der
+	// Konferenz: Typ + Quellen-ID + das ursprüngliche Paket.
+	MsgSourced byte = 0x07
 )
 
 // VoiceHeaderLen ist die Länge des Sprachpaket-Kopfs.
@@ -65,6 +68,12 @@ type Control struct {
 	// Sprachkanal
 	Deaf    bool          `json:"deaf,omitempty"`
 	Members []VoiceMember `json:"members,omitempty"`
+	// Konferenz: Quelle (0 = Host) und Zeige-Klicks (0..1 im Bild)
+	Src uint64  `json:"src,omitempty"`
+	X   float64 `json:"x,omitempty"`
+	Y   float64 `json:"y,omitempty"`
+	// Point: Der Streamer lässt Zeige-Klicks zu.
+	Point bool `json:"point,omitempty"`
 }
 
 // FramePacket baut ein Binärpaket mit einem JPEG-Frame.

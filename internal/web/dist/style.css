@@ -316,7 +316,7 @@ body.viewer { overflow: hidden; background: #000; }
   overflow: hidden;
 }
 
-#screen {
+#screen-wrap canvas {
   display: block;
   width: 100%;
   height: 100%;
@@ -326,7 +326,41 @@ body.viewer { overflow: hidden; background: #000; }
 
 /* Originalgröße: Pixel 1:1, bei Bedarf scrollen */
 #screen-wrap.native { overflow: auto; display: grid; place-items: center; }
-#screen-wrap.native #screen { width: auto; height: auto; max-width: none; max-height: none; object-fit: none; }
+#screen-wrap.native canvas { width: auto; height: auto; max-width: none; max-height: none; object-fit: none; }
+
+/* Konferenz: weitere Bildschirme als Kacheln unten */
+.tiles {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  display: flex; gap: 10px; z-index: 9; max-width: calc(100vw - 24px); overflow-x: auto;
+  transition: opacity .25s;
+}
+body.idle .tiles { opacity: .35; }
+.tile {
+  position: relative; flex: none; width: 210px; height: 118px; border-radius: 10px; overflow: hidden;
+  background: #000; border: 2px solid rgba(255, 255, 255, .18); cursor: pointer; box-shadow: var(--shadow);
+}
+.tile:hover { border-color: var(--accent); }
+.tile canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+.tile .label {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 8px; font-size: 12px; font-weight: 600;
+  background: linear-gradient(to top, rgba(0, 0, 0, .8), transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.share-btn { color: #e3e5e8; }
+.share-btn.on { color: #fff; background: var(--red); }
+
+/* Zeige-Klicks */
+.point-hint {
+  position: absolute; left: 50%; top: 64px; transform: translateX(-50%); margin: 0; z-index: 8;
+  font-size: 12.5px; color: var(--muted); background: rgba(17, 18, 20, .75); padding: 5px 12px; border-radius: 999px;
+  pointer-events: none; transition: opacity .25s;
+}
+body.idle .point-hint { opacity: 0; }
+.ripple {
+  position: fixed; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  border: 3px solid var(--accent); pointer-events: none; z-index: 30; animation: ripple .6s ease-out forwards;
+}
+.ripple.big { border-color: #fff; animation-duration: 1.2s; }
+@keyframes ripple { from { transform: scale(.6); opacity: 1; } to { transform: scale(5); opacity: 0; } }
 
 .topbar {
   position: absolute;
@@ -664,3 +698,5 @@ body.host { overflow-y: auto; background: var(--bg); }
 
 .update-card { display: flex; align-items: center; gap: 12px; border: 1.5px solid var(--accent); flex-wrap: wrap; padding: 16px 20px; animation: rise .2s ease-out; }
 .update-card .update-text { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 2px; }
+.voice-member .rate { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.settings-grid .full { grid-column: 1 / -1; }

@@ -26,6 +26,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/api/stop", a.localOnly(a.handleStop))
 	mux.HandleFunc("/api/allow", a.localOnly(a.handleAllow))
 	mux.HandleFunc("/api/deny", a.localOnly(a.handleDeny))
+	mux.HandleFunc("/api/allow-always", a.localOnly(a.handleAllowAlways))
+	mux.HandleFunc("/api/untrust", a.localOnly(a.handleUntrust))
 	mux.HandleFunc("/api/pause", a.localOnly(a.handlePause))
 	mux.HandleFunc("/api/target", a.localOnly(a.handleTarget))
 	mux.HandleFunc("/api/autostart", a.localOnly(a.handleAutostart))
@@ -35,6 +37,12 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/api/overlay/state", a.handleOverlayState)
 	mux.HandleFunc("/api/openlog", a.localOnly(a.handleOpenLog))
 	mux.HandleFunc("/api/update", a.localOnly(a.handleUpdate))
+	mux.HandleFunc("/api/present", a.handlePresent)
+	mux.HandleFunc("/api/conference/join", a.localOnly(a.handleConferenceJoin))
+	mux.HandleFunc("/api/conference/own", a.localOnly(a.handleConferenceOwn))
+	mux.HandleFunc("/api/present/accept", a.localOnly(a.handlePresentAccept))
+	mux.HandleFunc("/api/present/decline", a.localOnly(a.handlePresentDecline))
+	mux.HandleFunc("/api/present/stop", a.localOnly(a.handlePresentStop))
 	mux.HandleFunc("/api/audiosessions", a.localOnly(a.handleAudioSessions))
 	mux.HandleFunc("/api/openmixer", a.localOnly(a.handleOpenMixer))
 	mux.Handle("/", hostIndex(web.FS()))
@@ -130,6 +138,29 @@ func (a *App) handleAllow(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleDeny(w http.ResponseWriter, r *http.Request) {
 	a.handleKnockDecision(w, r, a.Deny)
+}
+
+func (a *App) handleAllowAlways(w http.ResponseWriter, r *http.Request) {
+	a.handleKnockDecision(w, r, a.AllowAlways)
+}
+
+func (a *App) handleUntrust(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "ungültige Anfrage")
+		return
+	}
+	if err := a.Untrust(body.Token); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.Config())
 }
 
 func (a *App) handleKnockDecision(w http.ResponseWriter, r *http.Request, decide func(uint64) error) {
@@ -273,6 +304,84 @@ func (a *App) handleOverlayState(w http.ResponseWriter, r *http.Request) {
 	}
 	overlay.Update(st)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handlePresent: Die Konferenz-Seite bittet darum, hier zu teilen. Offen
+// für jede Seite – gestreamt wird aber erst nach Bestätigung im Panel.
+func (a *App) handlePresent(w http.ResponseWriter, r *http.Request) {
+	if !openCORS(w, r) {
+		return
+	}
+	var req PresentRequest
+	var body struct {
+		Server, Room, Token, Host, Nonce string
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "ungültige Anfrage")
+		return
+	}
+	req = PresentRequest{Server: body.Server, Room: body.Room, Token: body.Token, Host: body.Host, Nonce: body.Nonce}
+	if err := a.RequestPresent(req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleConferenceJoin öffnet die Konferenz eines anderen (ID oder Link).
+func (a *App) handleConferenceJoin(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Target string `json:"target"`
+	}
+	if r.Method != http.MethodPost || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body) != nil {
+		writeError(w, http.StatusBadRequest, "ungültige Anfrage")
+		return
+	}
+	if err := a.JoinConference(body.Target, false, false, false); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleConferenceOwn öffnet die eigene Konferenz im Fenster.
+func (a *App) handleConferenceOwn(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	if err := a.OpenOwnConference(false, false); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (a *App) handlePresentAccept(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "nur POST")
+		return
+	}
+	var target capture.Target
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&target); err != nil {
+		writeError(w, http.StatusBadRequest, "ungültiges Ziel")
+		return
+	}
+	if err := a.AcceptPresent(target); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.Status())
+}
+
+func (a *App) handlePresentDecline(w http.ResponseWriter, r *http.Request) {
+	a.DeclinePresent()
+	writeJSON(w, http.StatusOK, a.Status())
+}
+
+func (a *App) handlePresentStop(w http.ResponseWriter, r *http.Request) {
+	a.StopPresent()
+	writeJSON(w, http.StatusOK, a.Status())
 }
 
 // handleUpdate spielt die neueste Version ein (POST).

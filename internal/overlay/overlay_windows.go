@@ -3,6 +3,7 @@
 package overlay
 
 import (
+	"image"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -184,8 +185,12 @@ func loop() {
 	h, _, _ := pCreateWindowExW.Call(wsExLayered|wsExTopmost|wsExToolWindow|wsExNoActivate,
 		uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(title)), wsPopup,
 		uintptr(x), uintptr(y), 10, 10, 0, 0, inst, 0)
+	ph, _, _ := pCreateWindowExW.Call(wsExLayered|wsExTopmost|wsExToolWindow|wsExNoActivate|wsExTransparent,
+		uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(title)), wsPopup,
+		0, 0, 10, 10, 0, 0, inst, 0)
 	mu.Lock()
 	hwnd = h
+	pingHwnd = ph
 	mu.Unlock()
 	close(ready)
 	redraw()
@@ -205,7 +210,7 @@ func wndProc(h, message, wParam, lParam uintptr) uintptr {
 	switch message {
 	case wmNCHitTest:
 		mu.Lock()
-		through := state.Settings.ClickThrough
+		through := state.Settings.ClickThrough || h == pingHwnd
 		mu.Unlock()
 		if through {
 			return htTransparent
@@ -225,6 +230,14 @@ func wndProc(h, message, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmRedraw:
 		redraw()
+		return 0
+	case wmPing:
+		startPing()
+		return 0
+	case wmTimer:
+		if h == pingHwnd {
+			pingFrame()
+		}
 		return 0
 	case wmShow:
 		if wParam == 1 {
@@ -271,6 +284,14 @@ func redraw() {
 	}
 	pSetWindowLongPtrW.Call(h, gwlExStyle, ex)
 
+	present(h, img, byte(st.Settings.Opacity*255/100), nil)
+	lastSize.w, lastSize.h = w, ht
+}
+
+// present gibt ein Bild mit Transparenz an ein Layered-Fenster, auf Wunsch
+// gleich an eine neue Position.
+func present(h uintptr, img *image.RGBA, alpha byte, pos *struct{ X, Y int32 }) {
+	w, ht := int32(img.Bounds().Dx()), int32(img.Bounds().Dy())
 	// Windows will BGRA mit vorab multipliziertem Alpha – image.RGBA hat das
 	// Alpha schon drin, nur Rot und Blau tauschen.
 	pix := make([]byte, len(img.Pix))
@@ -296,8 +317,7 @@ func redraw() {
 
 	size := struct{ CX, CY int32 }{w, ht}
 	src := struct{ X, Y int32 }{0, 0}
-	blend := [4]byte{0, 0, byte(st.Settings.Opacity * 255 / 100), acSrcAlpha}
-	pUpdateLayeredWindow.Call(h, screen, 0, uintptr(unsafe.Pointer(&size)), mem,
+	blend := [4]byte{0, 0, alpha, acSrcAlpha}
+	pUpdateLayeredWindow.Call(h, screen, uintptr(unsafe.Pointer(pos)), uintptr(unsafe.Pointer(&size)), mem,
 		uintptr(unsafe.Pointer(&src)), 0, uintptr(unsafe.Pointer(&blend)), ulwAlpha)
-	lastSize.w, lastSize.h = w, ht
 }

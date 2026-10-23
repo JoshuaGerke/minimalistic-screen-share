@@ -16,3 +16,9 @@ type Source interface {
 	Channels() int
 	Close() error
 }
+
+// SelfTree als Ausschluss nimmt den Prozessbaum der App selbst aus der
+// Aufnahme – dazu gehört das Konferenz-Fenster mit Sprachkanal und den
+// Bildschirmen der anderen. Sonst hörten die anderen sich über den eigenen
+// Stream selbst wieder.
+const SelfTree = "<self>"

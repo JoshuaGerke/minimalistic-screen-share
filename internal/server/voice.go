@@ -54,6 +54,7 @@ func (s *Server) voiceJoin(c *client, on bool) {
 	}
 	if on {
 		rm.voice[c] = struct{}{}
+		c.voicePkts = 0
 		c.enqueueControl(proto.Control{T: "voice-you", ID: c.id})
 		s.log.Printf("Raum %q: %s im Sprachkanal (%d)", rm.code, c.name, len(rm.voice))
 	} else {
@@ -105,6 +106,9 @@ func (s *Server) relayVoice(c *client, msg []byte) {
 	if _, ok := rm.voice[c]; !ok || c.voiceMuted {
 		return
 	}
+	if c.voicePkts++; c.voicePkts == 1 {
+		s.log.Printf("Raum %q: Ton von %s kommt im Sprachkanal an", rm.code, c.name)
+	}
 	out := append([]byte(nil), msg...)
 	binary.LittleEndian.PutUint32(out[1:], uint32(c.id))
 	for m := range rm.voice {
@@ -132,4 +136,29 @@ func (s *Server) sendVoiceRosterLocked(rm *room) {
 	for p := range rm.panels {
 		p.enqueueControl(ctl)
 	}
+}
+
+// setTrusted übernimmt die dauerhaft freigegebenen Tokens des Hosts.
+func (s *Server) setTrusted(host *client, tokens []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rm := host.room
+	if rm == nil || rm.host != host {
+		return
+	}
+	rm.trusted = map[string]bool{}
+	for _, t := range tokens {
+		if len(t) >= 16 {
+			rm.trusted[t] = true
+		}
+	}
+	// Wer vertraut ist und gerade wartet, darf sofort rein.
+	for p := range rm.pending {
+		if rm.trusted[p.token] {
+			delete(rm.pending, p)
+			s.admitLocked(rm, p)
+			host.enqueueControl(proto.Control{T: "knock-gone", ID: p.id})
+		}
+	}
+	s.sendViewersLocked(rm)
 }

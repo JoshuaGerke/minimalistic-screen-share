@@ -236,6 +236,10 @@ func (s *switchSource) retarget(cp **capture) {
 	want := uint32(0)
 	name := ""
 	for _, n := range names {
+		if n == SelfTree {
+			want, name = uint32(os.Getpid()), "Konferenz-Fenster"
+			break
+		}
 		if pid := rootProcess(n); pid != 0 {
 			want, name = pid, n
 			break

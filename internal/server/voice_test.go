@@ -72,3 +72,22 @@ func TestVoiceChannel(t *testing.T) {
 		}
 	}
 }
+
+// TestTrusted: "Immer reinlassen" – vertraute Tokens kommen direkt rein,
+// auch wer gerade wartet, sobald er auf die Liste kommt.
+func TestTrusted(t *testing.T) {
+	ts := newTestServer(t, time.Second, 8)
+	host := dial(t, ts, "vertraut", "host")
+	host.waitControl("joined")
+
+	waiting := dialToken(t, ts, "vertraut", "viewer", "token-wartet-1234567")
+	waiting.waitControl("joined")
+	if k := host.waitControl("knock"); k.Token != "token-wartet-1234567" {
+		t.Fatalf("Anfrage ohne Token: %+v", k)
+	}
+	host.send(proto.Control{T: "trusted", Names: []string{"token-wartet-1234567", "token-freund-1234567"}})
+	waiting.waitControl("allowed")
+
+	friend := dialToken(t, ts, "vertraut", "viewer", "token-freund-1234567")
+	friend.waitControl("allowed")
+}

@@ -193,7 +193,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
       const node = new AudioWorkletNode(ctx, 'mss-voice-player', { numberOfInputs: 0, outputChannelCount: [2] });
       const gain = ctx.createGain();
       node.connect(gain).connect(master);
-      p = { id, ch, node, gain, lastPkt: 0, level: 0, dec: null };
+      p = { id, ch, node, gain, lastPkt: 0, level: 0, dec: null, bytes: 0, kbps: 0 };
       p.dec = new AudioDecoder({
         output: (ad) => {
           const n = ad.numberOfFrames;
@@ -235,6 +235,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
       const s = dv.getUint32(5, true);
       const p = peer(id, (s & 0x80000000) ? 2 : 1);
       p.lastPkt = performance.now();
+      p.bytes += buf.byteLength;
       if (p.dec.state !== 'configured') return;
       p.dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: (s & 0x7fffffff) * 20000, data: new Uint8Array(buf, 9) }));
     }
@@ -300,6 +301,12 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
     window.addEventListener('keyup', (e) => { if (e.code === settings.pttKey) st.pttDown = false; });
     window.addEventListener('blur', () => { st.pttDown = false; });
 
+    // Datenrate je Teilnehmer – zeigt, ob überhaupt Ton ankommt.
+    setInterval(() => {
+      for (const [, p] of peers) { p.kbps = Math.round(p.bytes * 8 / 1000); p.bytes = 0; }
+      if (st.joined) changed();
+    }, 1000);
+
     // Sprech-Anzeige: frische Pakete mit hörbarem Pegel.
     setInterval(() => {
       const now = performance.now();
@@ -313,6 +320,23 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
       if (dirty) changed();
       if (root && st.joined) renderMeter();
     }, 100);
+
+    // Spielt einen leisen, kurzen Ton über denselben Weg wie die Stimmen –
+    // so lässt sich prüfen, ob Ausgabegerät und Lautstärke stimmen.
+    async function testOutput() {
+      await ensureContext();
+      await ctx.resume();
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      const t = ctx.currentTime;
+      osc.frequency.value = 523;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.03, t + 0.05); // etwa −30 dB
+      g.gain.linearRampToValueAtTime(0, t + 0.4);
+      osc.connect(g).connect(master);
+      osc.start(t);
+      osc.stop(t + 0.45);
+    }
 
     /* ---------- Geräte ---------- */
 
@@ -370,7 +394,8 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
         <div class="voice-members"></div>
         <div class="voice-settings hidden">
           <label class="field"><span>Mikrofon</span><select data-set="mic"></select></label>
-          <label class="field"><span>Ausgabe</span><select data-set="out"></select></label>
+          <label class="field"><span>Ausgabe</span><select data-set="out"></select>
+            <button class="btn ghost" data-act="testout" type="button">Ausgabe testen (leiser Ton)</button></label>
           <label class="field"><span>Eingabemodus</span><select data-set="mode"><option value="vad">Sprachaktivierung</option><option value="ptt">Push-to-Talk (solange dieses Fenster aktiv ist)</option></select></label>
           <label class="field ptt-only"><span>Push-to-Talk-Taste</span><button class="btn ghost" data-act="pttkey" type="button"></button></label>
           <label class="field full vad-only"><span>Empfindlichkeit <b class="thr-label"></b></span>
@@ -409,6 +434,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
         case 'deaf': setDeaf(!st.deaf); break;
         case 'settings': root.querySelector('.voice-settings').classList.toggle('hidden'); listDevices(); break;
         case 'overlay': opts.onOverlay && opts.onOverlay(api); break;
+        case 'testout': testOutput(); break;
         case 'pttkey':
           waitingKey = true;
           b.textContent = 'Taste drücken…';
@@ -492,6 +518,10 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
         const av = el('span', 'avatar', (m.name || '?').slice(0, 1).toUpperCase());
         const name = el('span', 'name', m.name + (m.id === st.me ? ' (du)' : ''));
         row.append(av, name);
+        if (m.id !== st.me && st.joined) {
+          const p = peers.get(m.id);
+          row.append(el('span', 'rate', p && p.kbps ? `${p.kbps} kbit/s` : 'kein Ton'));
+        }
         if (m.muted) row.append(el('span', 'flag', 'stumm'));
         if (m.deaf) row.append(el('span', 'flag', 'taub'));
         if (m.id !== st.me) {

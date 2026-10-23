@@ -93,6 +93,13 @@
     $('#cfg-audio').checked = !!cfg.audio;
     $('#cfg-auto').checked = !!cfg.auto_accept;
     $('#cfg-diagnose').checked = !!cfg.diagnose;
+    $('#cfg-pointing').checked = !!cfg.pointing;
+    $('#cfg-auto-share').checked = !!cfg.auto_share;
+    $('#cfg-auto-join').value = cfg.auto_join || '';
+    $('#cfg-auto-present').checked = !!cfg.auto_present;
+    $('#cfg-auto-voice').checked = !!cfg.auto_voice;
+    $('#cfg-auto-muted').checked = !!cfg.auto_muted;
+    renderTrusted();
     $('#cfg-cursor').checked = cfg.target ? !!cfg.target.cursor : true;
     $('#cfg-name').value = cfg.name || '';
     $('#cfg-room').value = cfg.room || '';
@@ -188,6 +195,12 @@
       audio: $('#cfg-audio').checked,
       auto_accept: $('#cfg-auto').checked,
       diagnose: $('#cfg-diagnose').checked,
+      pointing: $('#cfg-pointing').checked,
+      auto_share: $('#cfg-auto-share').checked,
+      auto_join: $('#cfg-auto-join').value.trim(),
+      auto_present: $('#cfg-auto-present').checked,
+      auto_voice: $('#cfg-auto-voice').checked,
+      auto_muted: $('#cfg-auto-muted').checked,
       target: { ...(cfg.target || {}), cursor: $('#cfg-cursor').checked },
     };
     const hint = $('#save-hint');
@@ -209,7 +222,7 @@
 
   $('#btn-openlog').addEventListener('click', () => api('/api/openlog', {}).catch(() => {}));
 
-  for (const id of ['#cfg-diagnose', '#cfg-fps', '#cfg-bitrate', '#cfg-compat', '#cfg-width', '#cfg-audio', '#cfg-auto', '#cfg-room', '#cfg-name', '#cfg-server']) {
+  for (const id of ['#cfg-auto-share', '#cfg-auto-join', '#cfg-auto-present', '#cfg-auto-voice', '#cfg-auto-muted', '#cfg-pointing', '#cfg-diagnose', '#cfg-fps', '#cfg-bitrate', '#cfg-compat', '#cfg-width', '#cfg-audio', '#cfg-auto', '#cfg-room', '#cfg-name', '#cfg-server']) {
     $(id).addEventListener('change', scheduleSave);
   }
   $('#cfg-quality').addEventListener('input', () => {
@@ -313,7 +326,22 @@
   });
 
   $('#btn-copy').addEventListener('click', () => copyLink(false));
-  $('#btn-open-viewer').addEventListener('click', () => { if (st.link_ready) window.open(st.share_url + '&self=1', '_blank'); });
+  $('#btn-open-viewer').addEventListener('click', async () => {
+    try { await api('/api/conference/own', {}); } catch (e) { toast(e.message); }
+  });
+
+  $('#btn-join-conf').addEventListener('click', async () => {
+    const target = $('#join-target').value.trim();
+    if (!target) { $('#join-target').focus(); return; }
+    $('#btn-join-conf').disabled = true;
+    try {
+      await api('/api/conference/join', { target });
+      toast('Konferenz wird geöffnet…');
+    } catch (e) {
+      toast(e.message, 4000);
+    }
+    $('#btn-join-conf').disabled = false;
+  });
 
   /* ---------- Status ---------- */
 
@@ -336,6 +364,7 @@
 
     renderRequests(pending);
     renderUpdate(st.update || {});
+    renderPresent();
     renderLink();
     renderLive(s);
     renderViewers(s);
@@ -448,12 +477,18 @@
       ok.type = 'button';
       ok.textContent = 'Reinlassen';
       ok.addEventListener('click', () => decide('/api/allow', p.id));
+      const always = document.createElement('button');
+      always.className = 'btn';
+      always.type = 'button';
+      always.textContent = 'Immer reinlassen';
+      always.title = 'Kommt künftig ohne Nachfrage rein – auch nach Neustarts';
+      always.addEventListener('click', () => decide('/api/allow-always', p.id).then(load));
       const no = document.createElement('button');
       no.className = 'btn ghost';
       no.type = 'button';
       no.textContent = 'Ablehnen';
       no.addEventListener('click', () => decide('/api/deny', p.id));
-      row.append(name, ok, no);
+      row.append(name, ok, always, no);
       box.appendChild(row);
     }
   }
@@ -527,6 +562,55 @@
       box.appendChild(row);
     }
   }
+
+  /* ---------- Immer reinlassen ---------- */
+
+  function renderTrusted() {
+    const box = $('#trusted-list');
+    box.innerHTML = '';
+    const list = cfg.trusted || [];
+    $('#trusted-field').classList.toggle('hidden', list.length === 0);
+    for (const p of list) {
+      const row = document.createElement('div');
+      row.className = 'request-row';
+      const n = document.createElement('span');
+      n.className = 'request-name';
+      n.textContent = p.name || 'Unbekannt';
+      const rm = document.createElement('button');
+      rm.className = 'btn ghost';
+      rm.type = 'button';
+      rm.textContent = 'Entfernen';
+      rm.addEventListener('click', async () => {
+        cfg = await api('/api/untrust', { token: p.token }).catch(() => cfg);
+        renderTrusted();
+      });
+      row.append(n, rm);
+      box.append(row);
+    }
+  }
+
+  /* ---------- Teilen in fremde Konferenz ---------- */
+
+  function renderPresent() {
+    const req = st.present_request;
+    $('#present-card').classList.toggle('hidden', !req);
+    if (req) $('#present-title').textContent = `${req.host || 'Jemand'} möchte, dass du deinen Bildschirm in der Konferenz teilst`;
+    const p = st.presenting;
+    $('#presenting-card').classList.toggle('hidden', !p);
+    if (p) {
+      $('#presenting-title').textContent = `Du teilst in der Konferenz von ${p.host}`;
+      $('#presenting-sub').textContent = p.state === 'live'
+        ? `${p.viewers} ${p.viewers === 1 ? 'schaut' : 'schauen'} zu`
+        : (p.state === 'paused' ? 'Wartet auf Zuschauer' : 'Verbinde…');
+    }
+  }
+
+  $('#btn-present-yes').addEventListener('click', async () => {
+    try { await api('/api/present/accept', currentTarget()); toast('Du teilst jetzt in der Konferenz'); } catch (e) { showError(e.message); }
+    poll();
+  });
+  $('#btn-present-no').addEventListener('click', async () => { await api('/api/present/decline', {}).catch(() => {}); poll(); });
+  $('#btn-present-stop').addEventListener('click', async () => { await api('/api/present/stop', {}).catch(() => {}); poll(); });
 
   /* ---------- Update ---------- */
 

@@ -5,6 +5,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,4 +63,15 @@ func copyToClipboard(text string) error {
 		}
 	}
 	return errors.New("wl-copy oder xclip fehlt (pacman -S wl-clipboard)")
+}
+
+// showPointer: Hyprland erlaubt keine fremden Overlay-Fenster – der
+// Mauszeiger springt an die Stelle, dazu eine kurze Meldung.
+func showPointer(x, y int, name string, logg *log.Logger) {
+	if _, err := exec.LookPath("hyprctl"); err != nil {
+		logg.Printf("Zeige-Klick: hyprctl fehlt")
+		return
+	}
+	exec.Command("hyprctl", "dispatch", "movecursor", fmt.Sprint(x), fmt.Sprint(y)).Run()
+	exec.Command("hyprctl", "notify", "1", "2500", "rgb(5865f2)", name+" zeigt hierhin").Run()
 }

@@ -4,12 +4,15 @@ package app
 
 import (
 	"errors"
+	"log"
 	"os"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/overlay"
 )
 
 func platform() string { return "windows" }
@@ -103,3 +106,6 @@ func copyToClipboard(text string) error {
 	}
 	return nil
 }
+
+// showPointer zeigt den pulsierenden Ring des Zeige-Klicks.
+func showPointer(x, y int, name string, logg *log.Logger) { overlay.Ping(x, y, name) }

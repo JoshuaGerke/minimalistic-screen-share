@@ -35,6 +35,34 @@ Link öffnen, Namen eingeben, **Zuschauen**. Mehr braucht es nicht – kein Prog
 - `F` Vollbild, `O` Originalgröße (1:1, für kleinen Text), `I` Verbindungsdaten
 - Hört der andere auf zu teilen, einfach offen lassen: Sobald er wieder startet, bist du automatisch wieder dabei
 
+## Konferenz: alle teilen gleichzeitig
+
+Einer startet das Teilen – das ist die Konferenz. Alle anderen treten bei und können ihren eigenen Bildschirm dazuteilen:
+
+- **Beitreten:** In der App unter **Konferenz beitreten** die Sitzungs-ID (oder den Link) des anderen eingeben → **Beitreten**. Die Konferenz öffnet sich in einem eigenen Fenster. Die ID reicht: Die App findet die aktuelle Adresse selbst, auch wenn der andere neu gestartet hat.
+- **Mitteilen:** Im Konferenz-Fenster oben **Bildschirm teilen**. Deine App fragt kurz nach (im eigenen Fenster, mit Auswahl von Monitor oder Fenster) und streamt dann mit voller Grafikkarten-Leistung.
+- **Ansehen:** Ein Bildschirm ist groß, die anderen liegen als Kacheln unten – anklicken holt sie nach vorn. Der Ton spielt vom großen Bildschirm.
+- **Gastgeber:** Im eigenen Fenster auf **Konferenz öffnen** – dort siehst du alle anderen und den Sprachkanal (dein eigenes Bild bekommst du nicht zurück).
+
+**Immer reinlassen:** Bei einer Anfrage gibt es neben „Reinlassen“ den Knopf **Immer reinlassen**. Die Person kommt dann künftig ohne Nachfrage rein, auch nach Neustarts. Die Liste steht unter Einstellungen → Zugang und lässt sich dort wieder leeren.
+
+### Zeigen per Mausklick
+
+Wer zuschaut, klickt **fünfmal schnell auf dieselbe Stelle** im großen Bild – beim Streamer erscheint genau dort ein pulsierender Ring mit dem Namen (Windows) bzw. springt der Mauszeiger dorthin (Linux/Hyprland). Einzelne Klicks tun nichts, und mehr als ein Zeiger pro Sekunde geht nicht durch – es nervt also nicht. Jeder Streamer schaltet das unter **Einstellungen → Zugang → Zeigen erlauben** selbst frei.
+
+### Automatisch verbunden beim Hochfahren
+
+Unter **Einstellungen → Beim Start**:
+
+- **Bildschirm automatisch teilen** – dein Link und dein Bild sind sofort da
+- **Konferenz automatisch beitreten** – Sitzungs-ID des anderen eintragen
+- **Dort meinen Bildschirm teilen** – ohne Rückfrage
+- **Sprachkanal beitreten** und **dabei stumm**
+
+Dazu unter System **Beim Anmelden starten** – dann seid ihr nach dem Hochfahren ohne einen Klick in derselben Konferenz, mit allen Bildschirmen und (stummgeschaltetem) Sprachkanal. Ist der andere noch nicht da, versucht die App es alle 30 Sekunden weiter.
+
+> Wie die ID gefunden wird: Jede App veröffentlicht ihren aktuellen Link unter einem aus der Sitzungs-ID abgeleiteten Kanal bei [ntfy.sh](https://ntfy.sh) (kostenlos, ohne Konto). Dort steht nur die Adresse; wer die ID kennt, kann damit anklopfen – reinlassen musst trotzdem du.
+
 ## Für Co-Working
 
 - **Pausieren** (im Fenster oder Tray) hält das Bild sofort an, wenn du kurz etwas Privates machst. Die Zuschauer sehen „Pausiert“, die Verbindung bleibt stehen.
@@ -48,6 +76,8 @@ Reden wie bei Discord – direkt im Stream, ohne Extra-Programm:
 
 - **Wer streamt:** Im Fenster der App unter **Sprachkanal** auf **Beitreten** (geht, solange du teilst).
 - **Wer zuschaut:** Im Viewer oben rechts auf das **Headset-Symbol** → **Beitreten**.
+- Neben jedem Teilnehmer steht, ob gerade Ton von ihm ankommt (kbit/s). Unter den Einstellungen spielt **Ausgabe testen** einen leisen Ton – so prüfst du schnell, ob dein Lautsprecher stimmt.
+- Im Konferenz-Fenster (siehe oben) wird unter Windows alles, was dort spielt, automatisch aus deinem eigenen Stream herausgenommen – die anderen hören sich also nicht über deinen Stream wieder.
 
 Der Browser fragt einmal nach dem Mikrofon. Wer spricht, bekommt einen grünen Ring. Stumm (`Strg+Umschalt+M`) und taub (`Strg+Umschalt+D`) gibt es neben dem Knopf, die Lautstärke jeder Person lässt sich einzeln regeln.
 

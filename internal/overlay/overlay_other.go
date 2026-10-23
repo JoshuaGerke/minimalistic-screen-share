@@ -10,3 +10,6 @@ func Show(on bool)                                                       {}
 func Visible() bool                                                      { return false }
 func Update(st State)                                                    {}
 func systemFont() []byte                                                 { return nil }
+
+// Ping gibt es außerhalb von Windows nicht als Fenster.
+func Ping(x, y int, name string) {}

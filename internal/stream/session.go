@@ -47,13 +47,24 @@ type Options struct {
 	Target      capture.Target
 	// AudioExclude nennt Programme, die nicht mitgestreamt werden sollen.
 	AudioExclude func() []string
-	Log          *log.Logger
+	// Role ist "host" (eigener Raum, Standard) oder "presenter" (Teilen in
+	// die Konferenz eines anderen – mit Token aus dessen Freigabe).
+	Role  string
+	Token string
+	// Trusted liefert die dauerhaft freigegebenen Tokens (nur Host).
+	Trusted func() []string
+	// OnPing meldet Zeige-Klicks der Zuschauer (Position 0..1 im Bild).
+	OnPing func(x, y float64, name string)
+	// Pointing sagt den Zuschauern, ob Zeige-Klicks erwünscht sind.
+	Pointing func() bool
+	Log      *log.Logger
 }
 
 // Knock ist eine Zuschaueranfrage, die auf Freigabe wartet.
 type Knock struct {
-	ID   uint64 `json:"id"`
-	Name string `json:"name"`
+	ID    uint64 `json:"id"`
+	Name  string `json:"name"`
+	Token string `json:"-"` // für "Immer reinlassen"
 }
 
 // Status ist der Zustand, den Tray und Host-Panel anzeigen.
@@ -365,6 +376,7 @@ func (s *Session) metaMsg() proto.Control {
 	m := proto.Control{
 		T:     "meta",
 		Name:  s.opts.Name,
+		Point: s.opts.Pointing != nil && s.opts.Pointing(),
 		FPS:   int(s.fps.Load()),
 		Audio: s.audioAvail.Load() && s.audioOn.Load(),
 		Title: s.Target().Label(),
@@ -541,7 +553,11 @@ func (s *Session) connectAndStream() error {
 	defer conn.Close()
 	shrinkSendBuffer(conn)
 
-	join := proto.Control{T: "join", Room: s.opts.Room, Role: "host", Name: s.opts.Name, Ver: version.Version}
+	role := s.opts.Role
+	if role == "" {
+		role = "host"
+	}
+	join := proto.Control{T: "join", Room: s.opts.Room, Role: role, Name: s.opts.Name, Ver: version.Version, Token: s.opts.Token}
 	if err := conn.WriteJSON(join); err != nil {
 		return err
 	}
@@ -582,12 +598,11 @@ func (s *Session) connectAndStream() error {
 
 	// Freigabemodus, Stream-Beschreibung und Pausenzustand gehen vor allem
 	// anderen raus (gilt auch nach Reconnects).
-	for _, c := range []proto.Control{
-		{T: "auto", On: s.autoAccept.Load()},
-		{T: "voicekey", Token: s.voiceKey},
-		s.metaMsg(),
-		{T: "pause", On: s.paused.Load()},
-	} {
+	first := []proto.Control{s.metaMsg(), {T: "pause", On: s.paused.Load()}}
+	if role == "host" {
+		first = append([]proto.Control{{T: "auto", On: s.autoAccept.Load()}, {T: "voicekey", Token: s.voiceKey}, s.trustedMsg()}, first...)
+	}
+	for _, c := range first {
 		if err := conn.WriteJSON(c); err != nil {
 			return err
 		}
@@ -738,9 +753,13 @@ func (s *Session) readLoop(conn *websocket.Conn, stop <-chan struct{}) error {
 				s.mu.Unlock()
 				s.notifyStatus()
 			case "knock":
-				s.addPending(Knock{ID: ctl.ID, Name: ctl.Name})
+				s.addPending(Knock{ID: ctl.ID, Name: ctl.Name, Token: ctl.Token})
 			case "knock-gone":
 				s.removePending(ctl.ID)
+			case "ping":
+				if s.opts.OnPing != nil {
+					go s.opts.OnPing(ctl.X, ctl.Y, ctl.Name)
+				}
 			case "error":
 				if ctl.Fatal {
 					readErr <- errors.New(ctl.Msg)
@@ -1006,6 +1025,35 @@ func (s *Session) jpegLoop(ob *outbox, stop <-chan struct{}, gen int32) error {
 		s.width.Store(int32(w))
 		s.height.Store(int32(h))
 	}
+}
+
+func (s *Session) trustedMsg() proto.Control {
+	var list []string
+	if s.opts.Trusted != nil {
+		list = s.opts.Trusted()
+	}
+	return proto.Control{T: "trusted", Names: list}
+}
+
+// SendTrusted schickt die Liste vertrauter Personen erneut an den Relay.
+func (s *Session) SendTrusted() error { return s.sendJSON(s.trustedMsg()) }
+
+// KnockToken liefert den Token einer wartenden Anfrage.
+func (s *Session) KnockToken(id uint64) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range s.pending {
+		if k.ID == id {
+			return k.Token
+		}
+	}
+	return ""
+}
+
+// SetPointing hinterlegt, was bei Zeige-Klicks passiert und ob sie erlaubt sind.
+func (s *Session) SetPointing(onPing func(x, y float64, name string), allowed func() bool) {
+	s.opts.OnPing = onPing
+	s.opts.Pointing = allowed
 }
 
 // VoiceKey ist der Schlüssel, mit dem das Panel dem Sprachkanal beitritt.

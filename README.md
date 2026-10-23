@@ -21,6 +21,10 @@ Discord kann Screensharing, aber 1080p gibt es nur mit Nitro, unter Linux ist Sy
 - **Rückkopplungsschutz**: Schaut man auf dem PC zu, der gerade streamt, bleibt der Viewer automatisch stumm.
 - **Sprachkanal wie Discord**: Opus in hoher Bitrate (bis 510 kbit/s, Stereo), Echo- und Rauschunterdrückung, automatische Lautstärke, Sprachaktivierung mit Pegelanzeige oder Push-to-Talk, stumm/taub, Lautstärke pro Person. Läuft im Browser (WebRTC-Audioverarbeitung + WebCodecs) über den Relay des Streams.
 - **Overlay**: schwebende Teilnehmerliste mit Sprech-Anzeige über allen Fenstern – unter Windows ein echtes halbtransparentes Fenster (verschiebbar, Deckkraft, Größe, Klicks durchlassen), sonst Bild-in-Bild des Browsers.
+- **Konferenz**: Jeder, der drin ist, teilt seinen Bildschirm dazu (über die eigene App, mit Hardware-Encoder); alle Bildschirme groß/als Kacheln, Gastgeber-Ansicht, „Immer reinlassen“.
+- **Zeigen per 5-fach-Klick**: Markierung beim Streamer an der angeklickten Stelle (optional, gedrosselt).
+- **Feste Sitzungs-ID** wie bei AnyDesk: Die aktuelle Adresse wird über ntfy.sh unter der ID veröffentlicht – Beitreten per ID, auch nach Neustarts.
+- **Automatisch verbunden** beim Start: teilen, Konferenz beitreten, dort teilen, Sprachkanal (stumm) – im eigenen Konferenz-Fenster.
 - **Diagnosemodus**: Leistungsdaten (CPU je Prozess, GPU-Auslastung, Systemlast, Stream-Werte) alle 2 s ins Log – zum Aufspüren von Rucklern.
 - **Viewer** mit Lautstärke, Bild-in-Bild (schwebt über anderen Fenstern), Vollbild, Originalgröße 1:1, Verbindungsdaten und Tastenkürzeln. Hört der Streamer auf, verbindet sich der Viewer von selbst wieder, sobald er weitermacht.
 - **Pausiert automatisch, wenn niemand zuschaut** – spart CPU und Traffic. Unveränderte Bilder werden gar nicht erst verschickt.

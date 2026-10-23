@@ -3,6 +3,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -70,9 +71,12 @@ type room struct {
 	gop      [][]byte
 	gopBytes int
 	// Sprachkanal: Teilnehmer, verbundene Host-Panels und deren Schlüssel.
-	voice    map[*client]struct{}
-	panels   map[*client]struct{}
-	voiceKey string
+	voice      map[*client]struct{}
+	panels     map[*client]struct{}
+	voiceKey   string
+	presenters map[*client]*source
+	// trusted sind Freigaben, die der Host dauerhaft gespeichert hat.
+	trusted map[string]bool
 }
 
 // stickyTypes sind Steuernachrichten, die neue Zuschauer nachgereicht bekommen.
@@ -88,6 +92,9 @@ type client struct {
 	needKey bool
 	// Sprachkanal-Zustand (geschützt durch Server.mu)
 	voiceMuted, voiceDeaf bool
+	voicePkts             int       // seit dem Beitritt weitergeleitete Sprachpakete
+	hostView              bool      // der Host selbst schaut sich die Konferenz an
+	lastPing              time.Time // Zeige-Klicks drosseln
 	role                  string
 	name                  string
 	room                  *room
@@ -166,7 +173,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		c.fail("Ungültiger Raumcode")
 		return
 	}
-	if join.Role != "host" && join.Role != "viewer" && join.Role != "voice" {
+	if join.Role != "host" && join.Role != "viewer" && join.Role != "voice" && join.Role != "presenter" {
 		c.fail("Unbekannte Rolle")
 		return
 	}
@@ -201,11 +208,12 @@ func (s *Server) join(c *client, code string) error {
 		}
 		if rm == nil {
 			rm = &room{
-				code:    code,
-				viewers: map[*client]struct{}{},
-				pending: map[*client]struct{}{},
-				voice:   map[*client]struct{}{},
-				panels:  map[*client]struct{}{},
+				code:       code,
+				viewers:    map[*client]struct{}{},
+				pending:    map[*client]struct{}{},
+				voice:      map[*client]struct{}{},
+				panels:     map[*client]struct{}{},
+				presenters: map[*client]*source{},
 			}
 			s.rooms[code] = rm
 		}
@@ -226,7 +234,7 @@ func (s *Server) join(c *client, code string) error {
 			// offenen Anfragen erneut melden.
 			for p := range rm.pending {
 				p.enqueueControl(proto.Control{T: "waiting"})
-				c.enqueueControl(proto.Control{T: "knock", ID: p.id, Name: p.name})
+				c.enqueueControl(proto.Control{T: "knock", ID: p.id, Name: p.name, Token: p.token})
 			}
 		}
 		if resume && len(rm.viewers) > 0 {
@@ -242,6 +250,12 @@ func (s *Server) join(c *client, code string) error {
 	if c.role == "voice" {
 		if !s.joinPanelLocked(c, rm) {
 			return errors.New("Sprachkanal: kein Zugang")
+		}
+		return nil
+	}
+	if c.role == "presenter" {
+		if !s.joinPresenterLocked(c, rm) {
+			return errors.New("Teilen: nur wer freigegeben ist")
 		}
 		return nil
 	}
@@ -261,6 +275,22 @@ func (s *Server) join(c *client, code string) error {
 	c.enqueueControl(proto.Control{T: "joined", Room: code, N: len(rm.viewers)})
 	if rm.host == nil {
 		c.enqueueControl(proto.Control{T: "reconnecting"})
+	}
+
+	// Vertraute Personen ("Immer reinlassen") kommen direkt rein.
+	if c.token != "" && rm.trusted[c.token] {
+		s.admitLocked(rm, c)
+		s.log.Printf("Raum %q: %s (vertraut) dabei (%d)", code, c.name, len(rm.viewers))
+		s.sendViewersLocked(rm)
+		return nil
+	}
+
+	// Der Host selbst (mit dem Schlüssel seiner App) muss nicht anklopfen.
+	if rm.voiceKey != "" && subtle.ConstantTimeCompare([]byte(c.token), []byte(rm.voiceKey)) == 1 {
+		c.hostView = true
+		s.admitLocked(rm, c)
+		s.sendViewersLocked(rm)
+		return nil
 	}
 
 	// Wer vor kurzem schon einmal freigegeben wurde, darf nach einem
@@ -284,7 +314,7 @@ func (s *Server) join(c *client, code string) error {
 
 	rm.pending[c] = struct{}{}
 	if rm.host != nil {
-		rm.host.enqueueControl(proto.Control{T: "knock", ID: c.id, Name: c.name})
+		rm.host.enqueueControl(proto.Control{T: "knock", ID: c.id, Name: c.name, Token: c.token})
 	}
 	s.log.Printf("Raum %q: %s fragt an (%d offen)", code, c.name, len(rm.pending))
 	return nil
@@ -301,6 +331,7 @@ func (s *Server) leave(c *client) {
 		return
 	}
 	s.leaveVoiceLocked(rm, c)
+	s.leavePresenterLocked(rm, c)
 	if c.role == "host" && rm.host == c {
 		rm.host = nil
 		s.notifyLocked(rm, proto.Control{T: "reconnecting"})
@@ -368,6 +399,10 @@ func (s *Server) closeRoom(rm *room) {
 	for p := range rm.panels {
 		all = append(all, p)
 	}
+	for p := range rm.presenters {
+		all = append(all, p)
+	}
+	rm.presenters = map[*client]*source{}
 	rm.voice = map[*client]struct{}{}
 	rm.panels = map[*client]struct{}{}
 	s.log.Printf("Raum %q: %d Teilnehmer werden informiert", rm.code, len(all))
@@ -427,12 +462,15 @@ func (s *Server) admitLocked(rm *room, c *client) {
 		s.rememberLocked(rm.code, c.token)
 	}
 	c.enqueueControl(proto.Control{T: "allowed"})
-	for _, msg := range rm.sticky {
-		c.enqueue(msg, true)
+	if !c.hostView {
+		for _, msg := range rm.sticky {
+			c.enqueue(msg, true)
+		}
+		for _, msg := range rm.gop {
+			c.enqueue(msg, false)
+		}
 	}
-	for _, msg := range rm.gop {
-		c.enqueue(msg, false)
-	}
+	s.sendSourceStateLocked(rm, c)
 	if len(rm.voice) > 0 {
 		c.enqueueControl(rm.voiceRoster())
 	}
@@ -509,7 +547,9 @@ func (s *Server) relayBinary(from *client, msg []byte) {
 		}
 	}
 	for v := range rm.viewers {
-		v.enqueue(msg, priority)
+		if !v.hostView {
+			v.enqueue(msg, priority)
+		}
 	}
 }
 
@@ -556,10 +596,13 @@ func (s *Server) notifyLocked(rm *room, ctl proto.Control) {
 func (s *Server) sendViewersLocked(rm *room) {
 	names := make([]string, 0, len(rm.viewers))
 	for v := range rm.viewers {
-		names = append(names, v.name)
+		if !v.hostView {
+			names = append(names, v.name)
+		}
 	}
 	sort.Strings(names)
-	data, _ := json.Marshal(proto.Control{T: "viewers", N: len(rm.viewers), Names: names})
+	s.sendPresenterAudienceLocked(rm)
+	data, _ := json.Marshal(proto.Control{T: "viewers", N: len(names), Names: names})
 	if rm.host != nil {
 		rm.host.enqueue(data, true)
 	}
@@ -584,6 +627,8 @@ func (c *client) readLoop() {
 		if mt == websocket.BinaryMessage {
 			if len(data) > 0 && data[0] == proto.MsgVoice {
 				c.srv.relayVoice(c, data)
+			} else if c.role == "presenter" {
+				c.srv.relaySourced(c, data)
 			} else if c.role == "host" {
 				c.srv.relayBinary(c, data)
 			}
@@ -614,10 +659,16 @@ func (c *client) readLoop() {
 			if c.role == "host" {
 				c.srv.endRoomNow(c)
 			}
+		case "trusted":
+			if c.role == "host" {
+				c.srv.setTrusted(c, ctl.Names)
+			}
 		case "voicekey":
 			if c.role == "host" {
 				c.srv.setVoiceKey(c, ctl.Token)
 			}
+		case "point":
+			c.srv.ping(c, ctl)
 		case "voice-join":
 			c.srv.voiceJoin(c, ctl.On)
 		case "voice-state":
@@ -625,6 +676,11 @@ func (c *client) readLoop() {
 		default:
 			if c.role == "host" {
 				c.srv.relayControl(c, ctl.T, data)
+			} else if c.role == "presenter" {
+				if ctl.T == "bye" {
+					return
+				}
+				c.srv.relayPresenterControl(c, ctl)
 			}
 		}
 	}

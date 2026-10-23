@@ -18,6 +18,7 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/config"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/diag"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/overlay"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/rendezvous"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/server"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/stream"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/tunnel"
@@ -41,6 +42,12 @@ type App struct {
 	// copyPending: Der Stream läuft schon, der Link aber noch nicht (Tunnel
 	// baut sich auf). Sobald er steht, landet er in der Zwischenablage.
 	copyPending bool
+
+	// Teilen in die Konferenz eines anderen
+	presentReq   *PresentRequest
+	presentNonce string // erlaubt dem eigenen Konferenz-Fenster das Teilen ohne Rückfrage
+	present      *stream.Session
+	presentInfo  PresentRequest
 
 	relaySrv   *http.Server
 	relayPort  int
@@ -70,6 +77,9 @@ type StatusView struct {
 	Stream      stream.Status `json:"stream"`
 	TargetLabel string        `json:"target_label"`
 	Update      update.Info   `json:"update"`
+	// Konferenz: offene Bitte zum Teilen und laufendes Teilen beim anderen
+	PresentRequest *PresentRequest `json:"present_request,omitempty"`
+	Presenting     *PresentView    `json:"presenting,omitempty"`
 	// Sprachkanal: Adresse und Schlüssel fürs Panel (nur während des Teilens).
 	VoiceURL string `json:"voice_url,omitempty"`
 	VoiceKey string `json:"voice_key,omitempty"`
@@ -205,6 +215,10 @@ func (a *App) Status() StatusView {
 		Stream:      a.last,
 		TargetLabel: a.cfg.Target.Label(),
 		Update:      update.Status(),
+		Presenting:  a.presentViewLocked(),
+	}
+	if a.presentReq != nil && time.Since(a.presentReq.At) < 10*time.Minute {
+		view.PresentRequest = a.presentReq
 	}
 	if a.sess != nil {
 		view.Stream = a.sess.Status()
@@ -287,26 +301,23 @@ func (a *App) Start(target capture.Target) error {
 	cfg.Save()
 
 	sess := stream.New(stream.Options{
-		Server:      srv,
-		Room:        cfg.Room,
-		Name:        cfg.Name,
-		FPS:         cfg.FPS,
-		Quality:     cfg.Quality,
-		MaxWidth:    cfg.MaxWidth,
-		BitrateKbps: cfg.Bitrate,
-		VideoMode:   cfg.VideoMode,
-		Audio:       cfg.Audio,
-		AutoAccept:  cfg.AutoAccept,
-		Target:      target,
-		Log:         a.log,
-		AudioExclude: func() []string {
-			if !excludeInCapture {
-				return nil
-			}
-			return a.Config().MutedApps
-		},
+		Server:       srv,
+		Room:         cfg.Room,
+		Name:         cfg.Name,
+		FPS:          cfg.FPS,
+		Quality:      cfg.Quality,
+		MaxWidth:     cfg.MaxWidth,
+		BitrateKbps:  cfg.Bitrate,
+		VideoMode:    cfg.VideoMode,
+		Audio:        cfg.Audio,
+		AutoAccept:   cfg.AutoAccept,
+		Target:       target,
+		Log:          a.log,
+		Trusted:      a.trustedTokens,
+		AudioExclude: a.audioExclude,
 	})
 	sess.SetOnChange(a.onSessionStatus)
+	sess.SetPointing(func(x, y float64, name string) { a.pointAt(sess.Target(), x, y, name) }, func() bool { return a.Config().Pointing })
 	a.sess = sess
 	a.copyPending = true
 	a.mu.Unlock()
@@ -347,6 +358,93 @@ func (a *App) voiceURLLocked() string {
 		return ""
 	}
 	return u
+}
+
+// trustedTokens sind die Freigaben, die immer ohne Nachfrage gelten.
+func (a *App) trustedTokens() []string {
+	c := a.Config()
+	out := make([]string, 0, len(c.Trusted))
+	for _, p := range c.Trusted {
+		out = append(out, p.Token)
+	}
+	return out
+}
+
+// AllowAlways lässt jemanden rein und merkt ihn sich dauerhaft.
+func (a *App) AllowAlways(id uint64) error {
+	sess, err := a.session()
+	if err != nil {
+		return err
+	}
+	token := sess.KnockToken(id)
+	var name string
+	for _, k := range sess.Status().Pending {
+		if k.ID == id {
+			name = k.Name
+		}
+	}
+	if token != "" {
+		c := a.Config()
+		c.Trusted = append(removeTrusted(c.Trusted, token), config.TrustedPerson{Name: name, Token: token})
+		if err := a.SaveConfig(c); err != nil {
+			return err
+		}
+		sess.SendTrusted()
+	}
+	return sess.Allow(id)
+}
+
+// Untrust nimmt jemanden wieder von der Liste.
+func (a *App) Untrust(token string) error {
+	c := a.Config()
+	c.Trusted = removeTrusted(c.Trusted, token)
+	if err := a.SaveConfig(c); err != nil {
+		return err
+	}
+	if sess, err := a.session(); err == nil {
+		sess.SendTrusted()
+	}
+	return nil
+}
+
+func removeTrusted(list []config.TrustedPerson, token string) []config.TrustedPerson {
+	out := list[:0:0]
+	for _, p := range list {
+		if p.Token != token {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// audioExclude bestimmt, was nicht in den Stream-Ton soll: das vom Nutzer
+// gewählte Programm – sonst bei offenem Konferenz-Fenster die App selbst
+// samt Fenster (Stimmen und Ton der anderen kämen sonst als Echo zurück).
+func (a *App) audioExclude() []string {
+	if !excludeInCapture {
+		return nil
+	}
+	if apps := a.Config().MutedApps; len(apps) > 0 {
+		return apps
+	}
+	if conferenceOpen() {
+		return []string{audio.SelfTree}
+	}
+	return nil
+}
+
+// publicBase ist die Adresse, unter der andere diese Sitzung erreichen –
+// nur im Internet-Modus und mit eigenem Server sinnvoll zu veröffentlichen.
+func (a *App) publicBase() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch a.cfg.Reach {
+	case config.ReachInternet:
+		return a.tunnelURL
+	case config.ReachServer:
+		return a.cfg.Server
+	}
+	return ""
 }
 
 // ApplyUpdate spielt die neueste Version ein und startet neu.
@@ -545,6 +643,9 @@ func (a *App) Serve() error {
 	// ffmpeg suchen/laden und Encoder testen, bevor jemand auf Start drückt.
 	go video.Prepare(a.log)
 	go a.diagLoop()
+	go a.autoConnect()
+	// Sitzungs-ID dauerhaft auffindbar machen (AnyDesk-artig, über ntfy.sh).
+	go rendezvous.Keep(nil, func() string { return a.Config().Room }, a.publicBase, a.log.Printf)
 	go update.Watch(a.log, func(info update.Info) {
 		a.notify("Update verfügbar", "Version "+info.Latest+" ist da – im Fenster auf „Jetzt aktualisieren“ klicken.")
 	})

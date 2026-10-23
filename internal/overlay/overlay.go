@@ -232,3 +232,62 @@ func roundRect(img *image.RGBA, x0, y0, x1, y1, r float64, c color.NRGBA) {
 	z.ClosePath()
 	fill(img, z, c)
 }
+
+var (
+	colPing     = color.NRGBA{88, 101, 242, 255}
+	colPingSoft = color.NRGBA{88, 101, 242, 120}
+	colClear    = color.NRGBA{}
+)
+
+// RenderPing malt einen Moment des Zeige-Rings (p von 0 bis 1): zwei Ringe,
+// die nach außen laufen und verblassen, ein Punkt in der Mitte und darunter
+// der Name.
+func RenderPing(p float64, name string, size int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	c := float64(size) / 2
+	fade := func(a uint8, f float64) uint8 { return uint8(float64(a) * math.Max(0, math.Min(1, f))) }
+	for i, delay := range []float64{0, 0.25} {
+		q := (p - delay) / 0.75
+		if q <= 0 || q >= 1 {
+			continue
+		}
+		r := 14 + 70*q
+		col := colPing
+		if i == 1 {
+			col = colPingSoft
+		}
+		col.A = fade(col.A, 1-q)
+		circle(img, c, c, r, col)
+		clearCircle(img, c, c, r-5)
+	}
+	dot := colPing
+	dot.A = fade(255, (1-p)/0.3)
+	circle(img, c, c, 9, dot)
+	if name != "" {
+		f := face(14)
+		tw := font.MeasureString(f, name).Ceil()
+		bg := colBG
+		bg.A = fade(bg.A, (1-p)/0.3)
+		y := int(c) + 34
+		roundRect(img, c-float64(tw)/2-8, float64(y), c+float64(tw)/2+8, float64(y+24), 10, bg)
+		txt := colText
+		txt.A = fade(255, (1-p)/0.3)
+		drawText(img, f, name, int(c)-tw/2, y+17, txt)
+	}
+	return img
+}
+
+// clearCircle macht eine runde Fläche wieder durchsichtig (für Ringe).
+func clearCircle(img *image.RGBA, cx, cy, r float64) {
+	b := img.Bounds()
+	z := vector.NewRasterizer(b.Dx(), b.Dy())
+	z.DrawOp = draw.Src
+	const k = 0.5522847498
+	z.MoveTo(float32(cx+r), float32(cy))
+	z.CubeTo(float32(cx+r), float32(cy+k*r), float32(cx+k*r), float32(cy+r), float32(cx), float32(cy+r))
+	z.CubeTo(float32(cx-k*r), float32(cy+r), float32(cx-r), float32(cy+k*r), float32(cx-r), float32(cy))
+	z.CubeTo(float32(cx-r), float32(cy-k*r), float32(cx-k*r), float32(cy-r), float32(cx), float32(cy-r))
+	z.CubeTo(float32(cx+k*r), float32(cy-r), float32(cx+r), float32(cy-k*r), float32(cx+r), float32(cy))
+	z.ClosePath()
+	z.Draw(img, b, image.NewUniform(colClear), image.Point{})
+}

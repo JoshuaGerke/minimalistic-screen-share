@@ -329,6 +329,28 @@ func windowBounds(hwnd uintptr) (rect, error) {
 	return r, nil
 }
 
+// Bounds liefert, wo das Ziel auf dem Bildschirm liegt (für Zeige-Klicks).
+func Bounds(t Target) (Rect, error) {
+	var r rect
+	var err error
+	switch t.Kind {
+	case "monitor":
+		r, err = monitorBounds(t.Monitor)
+	case "region":
+		return t.Region, nil
+	case "window":
+		h, _, e := findWindow(t.Window)
+		if e != nil {
+			return Rect{}, e
+		}
+		r, err = windowBounds(h)
+	default:
+		x, y := getSystemMetrics(smXVirtualScreen), getSystemMetrics(smYVirtualScreen)
+		r = rect{int32(x), int32(y), int32(x + getSystemMetrics(smCXVirtualScreen)), int32(y + getSystemMetrics(smCYVirtualScreen))}
+	}
+	return Rect{X: int(r.Left), Y: int(r.Top), W: int(r.Right - r.Left), H: int(r.Bottom - r.Top)}, err
+}
+
 // ListMonitors liefert alle Monitore in Enum-Reihenfolge.
 func ListMonitors() ([]Monitor, error) {
 	var out []Monitor

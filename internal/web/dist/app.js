@@ -1,44 +1,43 @@
-/* Viewer: WebSocket rein, Canvas und Lautsprecher raus.
- * Bild kommt als JPEG (in Stücken), Ton als PCM in 20-ms-Paketen. */
+/* Viewer und Konferenz: WebSocket rein, Bildschirme und Ton raus.
+ *
+ * Jeder geteilte Bildschirm ist eine "Quelle": 0 ist der Gastgeber, alle
+ * anderen sind Teilnehmer, die über ihre App in den Raum teilen (deren
+ * Pakete kommen verpackt als MsgSourced mit ihrer Kennung). Eine Quelle ist
+ * groß zu sehen, die anderen als Kacheln darunter. */
 (() => {
   'use strict';
 
   const $ = (s) => document.querySelector(s);
-  const canvas = $('#screen');
-  const ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  const params = new URLSearchParams(location.search);
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* egal */ } },
   };
 
-  let room = (new URLSearchParams(location.search).get('room') || '').trim().toLowerCase();
+  let room = (params.get('room') || '').trim().toLowerCase();
+  // Der Gastgeber öffnet die Konferenz mit dem Schlüssel seiner App: kein
+  // Anklopfen, und sein eigenes Bild kommt nicht zurück.
+  const hostKey = params.get('key') || '';
+  // Relay woanders als diese Seite (Konferenz-Fenster der App).
+  const relayURL = params.get('server') || '';
   let myName = store.get('mss-name', '');
   let ws = null;
   let wantConnect = false;
   let state = 'idle';
-  let hasFrame = false;
-  let hostPaused = false;
-  let hostName = '', targetTitle = '';
   let viewers = 0;
-  let frameW = 0, frameH = 0;
   let framesDrawn = 0, bytesIn = 0, fps = 0, kbps = 0, rtt = 0;
-  let lastPing = 0, lastPong = 0, unanswered = 0;
+  let lastPing = 0, unanswered = 0;
   let reconnectTimer = null, reconnectDelay = 1000;
   let lastError = '';
-  let videoKind = '–';
 
   /* ======================================================================
-   * Ton
+   * Ton des Streams
    *
-   * Ein Ringpuffer mit durchgehender Umrechnung auf die Rate des Geräts.
-   * Früher wurde jedes 20-ms-Paket einzeln umgerechnet und eingeplant – an
-   * den Kanten knackte es, und Taktunterschiede zwischen den Soundkarten
-   * führten zu Sprüngen. Jetzt:
-   *  - der Puffer wächst bei Aussetzern im Netz und schrumpft langsam wieder,
-   *  - Taktdrift wird über eine winzige Tempoanpassung (max. ±2 %)
-   *    ausgeglichen, statt hörbar zu springen.
-   * Läuft im AudioWorklet (eigener Thread), sonst im ScriptProcessor.
+   * Ein Ringpuffer mit durchgehender Umrechnung auf die Rate des Geräts
+   * (audio-core.js): Der Puffer wächst bei Aussetzern im Netz und schrumpft
+   * langsam wieder, Taktdrift wird über eine winzige Tempoanpassung
+   * ausgeglichen. Es spielt immer der Ton des groß gezeigten Bildschirms.
    * ==================================================================== */
 
   const WORKLET = `const audioCore = ${audioCore.toString()};
@@ -161,18 +160,31 @@ registerProcessor('mss-player', MssPlayer);`;
     audioSend({ silence: Math.round(audio.rate / 50) });
   }
 
+  // Tonrate und -zustand der groß gezeigten Quelle übernehmen.
+  function applySourceAudio(src) {
+    audioSend({ reset: true });
+    const m = src.meta || {};
+    if (m.rate && m.rate !== audio.rate) {
+      audio.rate = m.rate;
+      audioSend({ rate: m.rate });
+    }
+    audio.enabled = !!m.audio;
+    updateAudioUI();
+  }
+
   /* Rückkopplungsschutz: Schaut man auf dem PC zu, der gerade streamt,
    * nimmt dessen Systemton die eigene Wiedergabe wieder auf – das schaukelt
    * sich in Sekunden ohrenbetäubend laut hoch. Darum bleibt der Ton aus, bis
-   * geklärt ist, dass hier nicht gestreamt wird. */
-  const selfGuard = { pending: true, self: new URLSearchParams(location.search).get('self') === '1' };
+   * geklärt ist, dass hier nicht gestreamt wird. Der Gastgeber in seiner
+   * Konferenz bekommt sein eigenes Bild gar nicht erst, da passt es. */
+  const selfGuard = { pending: !hostKey, self: params.get('self') === '1' };
 
   function silenced() { return audio.muted || selfGuard.pending || selfGuard.self; }
 
   let localApp = { base: '', platform: '' }; // die App auf diesem PC, falls sie läuft
 
   async function checkSelf() {
-    selfGuard.pending = true;
+    selfGuard.pending = !hostKey;
     applyVolume();
     const ask = (port) => fetch(`http://127.0.0.1:${port}/api/hello?room=${encodeURIComponent(room)}`,
       { cache: 'no-store', signal: AbortSignal.timeout(1500) })
@@ -190,10 +202,12 @@ registerProcessor('mss-player', MssPlayer);`;
       if (r === 'self') self = true;
       if (r !== 'other') break; // fremdes Programm auf dem Port: weiter suchen
     }
-    selfGuard.self = selfGuard.self || self;
+    selfGuard.self = selfGuard.self || (self && !hostKey);
     selfGuard.pending = false;
     applyVolume();
     updateAudioUI();
+    updateShareButton();
+    maybeAutoPresent();
     if (selfGuard.self) toast('Du schaust auf dem PC zu, der gerade streamt – Ton bleibt aus, sonst gibt es eine laute Rückkopplung.', 6000);
   }
 
@@ -222,12 +236,256 @@ registerProcessor('mss-player', MssPlayer);`;
   }
 
   /* ======================================================================
+   * Quellen: ein Objekt pro geteiltem Bildschirm
+   * ==================================================================== */
+
+  const sources = new Map();
+  let focusedId = 0;
+
+  function makeSource(id, name) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    const tile = document.createElement('div');
+    tile.className = 'tile';
+    const label = document.createElement('span');
+    label.className = 'label';
+    tile.append(label);
+    tile.addEventListener('click', () => focus(id));
+    canvas.addEventListener('dblclick', toggleFullscreen);
+    canvas.addEventListener('pointerdown', (e) => onPointerDown(e, id));
+    const src = {
+      id, name, canvas, ctx, tile, label,
+      asm: { seq: -1, parts: [], got: 0 },
+      vasm: { seq: -1, parts: [], got: 0, key: false },
+      vdec: { dec: null, codec: '', waitKey: true, ts: 0 },
+      decoding: false, pendingBlob: null,
+      hasFrame: false, w: 0, h: 0, paused: false, meta: {},
+    };
+    sources.set(id, src);
+    return src;
+  }
+
+  function source(id) { return sources.get(id) || makeSource(id, id === 0 ? '' : 'Teilnehmer'); }
+  function focused() { return source(focusedId); }
+
+  function displayName(src) {
+    if (src.id === 0) return (src.meta && src.meta.name) || room;
+    return src.name;
+  }
+
+  function dropSource(id) {
+    const src = sources.get(id);
+    if (!src || id === 0) return;
+    if (src.vdec.dec && src.vdec.dec.state !== 'closed') src.vdec.dec.close();
+    src.canvas.remove();
+    src.tile.remove();
+    sources.delete(id);
+    if (focusedId === id) {
+      const next = [...sources.values()].find((s) => s.hasFrame) || source(0);
+      focus(next.id);
+    } else {
+      layout();
+    }
+  }
+
+  // Groß zeigen: Leinwand in die Bühne, alle anderen als Kacheln.
+  function focus(id) {
+    if (!sources.has(id)) return;
+    const changed = focusedId !== id;
+    focusedId = id;
+    if (changed) applySourceAudio(focused());
+    layout();
+    syncState();
+    renderTitle();
+  }
+
+  function layout() {
+    const wrap = $('#screen-wrap');
+    const tiles = $('#tiles');
+    let shown = 0;
+    for (const src of sources.values()) {
+      if (src.id === focusedId) {
+        if (src.canvas.parentNode !== wrap) wrap.appendChild(src.canvas);
+        src.tile.remove();
+        continue;
+      }
+      src.label.textContent = displayName(src);
+      if (src.hasFrame) {
+        if (src.canvas.parentNode !== src.tile) src.tile.prepend(src.canvas);
+        if (src.tile.parentNode !== tiles) tiles.appendChild(src.tile);
+        shown++;
+      } else {
+        src.tile.remove();
+      }
+    }
+    tiles.classList.toggle('hidden', shown === 0);
+  }
+
+  // Gesamtzustand aus der groß gezeigten Quelle ableiten.
+  function syncState() {
+    if (!['live', 'waiting', 'paused'].includes(state)) return;
+    const src = focused();
+    if (src.paused && src.hasFrame) setState('paused');
+    else if (src.hasFrame) setState('live');
+    else setState(src.paused ? 'paused' : 'waiting');
+  }
+
+  /* ---------- Bild ---------- */
+
+  function spsCodec(au) {
+    for (let i = 0; i + 7 < au.length; i++) {
+      if (au[i] === 0 && au[i + 1] === 0 && au[i + 2] === 1 && (au[i + 3] & 0x1f) === 7) {
+        const h = (b) => b.toString(16).padStart(2, '0');
+        return `avc1.${h(au[i + 4])}${h(au[i + 5])}${h(au[i + 6])}`;
+      }
+    }
+    return '';
+  }
+
+  /* H.264 über WebCodecs: Die Grafikkarte des Zuschauers dekodiert, das Bild
+   * landet ohne Umweg im Canvas. Geht nur in sicheren Kontexten (https,
+   * localhost) – darum ist der Internet-Link der Normalfall. */
+  let videoUnsupported = false;
+  function onVideoAU(src, au, key) {
+    if (!('VideoDecoder' in window)) {
+      if (!videoUnsupported) {
+        videoUnsupported = true;
+        lastError = 'Dieser Browser kann das Video hier nicht abspielen. Öffne den Link über https (Streamer: Verbindung „Überall“) oder bitte den Streamer um den Kompatibilitätsmodus.';
+        setState('error');
+      }
+      return;
+    }
+    const vd = src.vdec;
+    if (key) {
+      const codec = spsCodec(au) || (src.meta && src.meta.codec) || '';
+      if (codec && (codec !== vd.codec || !vd.dec || vd.dec.state === 'closed')) {
+        try {
+          if (vd.dec && vd.dec.state !== 'closed') vd.dec.close();
+          vd.dec = new VideoDecoder({
+            output: (frame) => drawFrame(src, frame),
+            error: () => { vd.waitKey = true; vd.codec = ''; },
+          });
+          vd.dec.configure({ codec, optimizeForLatency: true });
+          vd.codec = codec;
+          vd.waitKey = true;
+        } catch (e) { return; }
+      }
+    }
+    if (!vd.dec || vd.dec.state !== 'configured') return;
+    if (vd.waitKey) {
+      if (!key) return;
+      vd.waitKey = false;
+    }
+    // Kommt der Decoder nicht hinterher, lieber zum nächsten Keyframe springen.
+    if (!key && vd.dec.decodeQueueSize > 8) {
+      vd.waitKey = true;
+      return;
+    }
+    vd.ts += 16667;
+    try {
+      vd.dec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: vd.ts, data: au }));
+    } catch (e) {
+      vd.waitKey = true;
+    }
+  }
+
+  // drawFrame malt ein Bild (VideoFrame oder ImageBitmap) in die Quelle.
+  function drawFrame(src, img) {
+    const w = img.displayWidth || img.width, h = img.displayHeight || img.height;
+    if (src.canvas.width !== w || src.canvas.height !== h) {
+      src.canvas.width = w;
+      src.canvas.height = h;
+    }
+    src.w = w;
+    src.h = h;
+    src.ctx.drawImage(img, 0, 0);
+    img.close();
+    if (src.id === focusedId) framesDrawn++;
+    if (!src.hasFrame) {
+      src.hasFrame = true;
+      if (!focused().hasFrame) focus(src.id);
+      else {
+        layout();
+        if (src.id !== 0) toast(`${src.name} teilt jetzt – unten anklicken zum Großmachen`, 3500);
+      }
+      syncState();
+    }
+  }
+
+  // Immer nur das neueste Bild dekodieren – liegt eins in der Warteschlange,
+  // wird es durch das neue ersetzt.
+  function showJPEG(src, blob) {
+    if (src.decoding) { src.pendingBlob = blob; return; }
+    src.decoding = true;
+    createImageBitmap(blob).then((bmp) => drawFrame(src, bmp))
+      .catch(() => { /* kaputtes Bild, egal */ })
+      .finally(() => {
+        src.decoding = false;
+        if (src.pendingBlob) {
+          const next = src.pendingBlob;
+          src.pendingBlob = null;
+          showJPEG(src, next);
+        }
+      });
+  }
+
+  function onBinary(buf) {
+    bytesIn += buf.byteLength;
+    const type = new DataView(buf).getUint8(0);
+    if (type === 6) { voice.onPacket(buf); return; }
+    if (type === 7) {
+      if (buf.byteLength < 6) return;
+      const id = new DataView(buf).getUint32(1, true);
+      onSourcePacket(source(id), buf.slice(5));
+      return;
+    }
+    onSourcePacket(source(0), buf);
+  }
+
+  function onSourcePacket(src, buf) {
+    const v = new DataView(buf);
+    const type = v.getUint8(0);
+    if (type === 4 || type === 5) {
+      if (buf.byteLength < 17) return;
+      const seq = v.getUint32(1, true);
+      const idx = v.getUint16(13, true);
+      const count = v.getUint16(15, true);
+      const asmKey = type === 4 ? 'asm' : 'vasm';
+      let a = src[asmKey];
+      if (seq !== a.seq) a = src[asmKey] = { seq, parts: new Array(count), got: 0, key: v.getUint16(9, true) === 1 };
+      if (!a.parts[idx]) {
+        a.parts[idx] = new Uint8Array(buf, 17);
+        a.got++;
+      }
+      if (a.got !== count) return;
+      src[asmKey] = { seq: -1, parts: [], got: 0, key: false };
+      if (type === 4) {
+        showJPEG(src, new Blob(a.parts, { type: 'image/jpeg' }));
+      } else {
+        const total = a.parts.reduce((n, p) => n + p.length, 0);
+        const au = new Uint8Array(total);
+        let off = 0;
+        for (const p of a.parts) { au.set(p, off); off += p.length; }
+        onVideoAU(src, au, a.key);
+      }
+    } else if (type === 1) {
+      if (buf.byteLength <= 13) return;
+      showJPEG(src, new Blob([new Uint8Array(buf, 13)], { type: 'image/jpeg' }));
+    } else if (type === 2 || type === 3) {
+      if (src.id !== focusedId) return; // es spielt der Ton des großen Bildschirms
+      if (type === 2) onPCM(new Uint8Array(buf, 9));
+      else onSilence();
+    }
+  }
+
+  /* ======================================================================
    * Verbindung
    * ==================================================================== */
 
   // Ein Token pro Sitzung und Browser: Wer einmal freigegeben wurde, kommt
   // nach Abbrüchen und Stream-Neustarts ohne neues Anklopfen wieder rein.
   function tokenFor(roomName) {
+    if (hostKey) return hostKey;
     const key = 'mss-token-' + roomName;
     let token = store.get(key, '');
     if (!token) {
@@ -239,15 +497,19 @@ registerProcessor('mss-player', MssPlayer);`;
     return token;
   }
 
+  function relayBase() {
+    if (relayURL) return relayURL.replace(/\/+$/, '');
+    return location.origin;
+  }
+
   function connect() {
     cleanup();
     wantConnect = true;
-    lastPong = 0;
     unanswered = 0;
     setState(state === 'offline' ? 'offline' : 'connecting');
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const base = relayBase().replace(/^http/, 'ws');
     try {
-      ws = new WebSocket(`${proto}//${location.host}/ws`);
+      ws = new WebSocket(`${base}/ws`);
     } catch (e) {
       scheduleReconnect();
       return;
@@ -298,6 +560,10 @@ registerProcessor('mss-player', MssPlayer);`;
     }
   }, 3000);
 
+  function send(o) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o));
+  }
+
   function onControl(m) {
     switch (m.t) {
       case 'joined':
@@ -305,32 +571,43 @@ registerProcessor('mss-player', MssPlayer);`;
         setState('approval');
         break;
       case 'allowed':
-        setState(hostPaused ? 'paused' : (hasFrame ? 'live' : 'waiting'));
+        setState('waiting');
+        syncState();
+        maybeAutoVoice();
+        maybeAutoPresent();
         break;
       case 'denied':
         wantConnect = false;
         setState('denied');
         break;
-      case 'meta':
-        if (m.rate && m.rate !== audio.rate) {
-          audio.rate = m.rate;
-          audioSend({ rate: m.rate });
-        }
-        audio.enabled = !!m.audio;
-        if (!audio.enabled) audioSend({ reset: true });
-        hostName = m.name || hostName;
-        vdec.meta = m.codec || '';
-        videoKind = m.video === 'h264' ? 'H.264' : 'JPEG';
-        targetTitle = m.title || targetTitle;
+      case 'meta': {
+        const src = source(m.src || 0);
+        src.meta = m;
+        if (m.src) src.name = m.name || src.name;
+        if (src.id === focusedId) applySourceAudio(src);
+        layout();
         renderTitle();
-        updateAudioUI();
+        updatePointHint();
         break;
-      case 'pause':
-        hostPaused = !!m.on;
-        audioSend({ reset: true });
-        if (state === 'live' || state === 'waiting' || state === 'paused') {
-          setState(hostPaused ? 'paused' : (hasFrame ? 'live' : 'waiting'));
+      }
+      case 'pause': {
+        const src = source(m.src || 0);
+        src.paused = !!m.on;
+        if (src.id === focusedId) {
+          audioSend({ reset: true });
+          syncState();
         }
+        break;
+      }
+      case 'sources': {
+        const ids = new Set((m.members || []).map((x) => x.id));
+        for (const x of m.members || []) source(x.id).name = x.name;
+        for (const id of [...sources.keys()]) if (id !== 0 && !ids.has(id)) dropSource(id);
+        layout();
+        break;
+      }
+      case 'source-gone':
+        dropSource(m.src);
         break;
       case 'voice':
       case 'voice-you':
@@ -343,7 +620,6 @@ registerProcessor('mss-player', MssPlayer);`;
         break;
       case 'pong':
         rtt = Math.max(0, performance.now() - lastPing);
-        lastPong = performance.now();
         break;
       case 'reconnecting':
         setState('reconnecting');
@@ -352,16 +628,18 @@ registerProcessor('mss-player', MssPlayer);`;
         setState('approval');
         break;
       case 'live':
-        setState(hostPaused ? 'paused' : (hasFrame ? 'live' : 'waiting'));
+        setState('waiting');
+        syncState();
         break;
       case 'ended':
-        hasFrame = false;
+        for (const src of sources.values()) src.hasFrame = false;
         setState('offline');
         break;
       case 'error': {
         const msg = m.msg || 'Unbekannter Fehler';
         if (/nicht gefunden/i.test(msg)) {
           setState('offline');
+          findElsewhere();
         } else {
           lastError = msg;
           wantConnect = /voll|Anfragen/i.test(msg);
@@ -372,166 +650,95 @@ registerProcessor('mss-player', MssPlayer);`;
     }
   }
 
+  /* Sitzungs-ID nachschlagen: Läuft die Sitzung nicht auf diesem Server,
+   * hat ihre App vielleicht eine neue Adresse veröffentlicht (ntfy.sh,
+   * Kanal aus der ID abgeleitet – wie in internal/rendezvous). */
+  let lookedUp = false;
+  async function topicFor(id) {
+    const data = new TextEncoder().encode('mss-share:' + id);
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+    return 'mss-' + Array.from(hash).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 24);
+  }
+
+  async function findElsewhere() {
+    if (lookedUp || relayURL || !window.crypto || !crypto.subtle) return;
+    lookedUp = true;
+    try {
+      const res = await fetch(`https://ntfy.sh/${await topicFor(room)}/json?poll=1&since=12h`, { signal: AbortSignal.timeout(8000) });
+      let url = '';
+      for (const line of (await res.text()).split('\n')) {
+        try {
+          const ev = JSON.parse(line);
+          if (ev.event === 'message') url = JSON.parse(ev.message).url || url;
+        } catch (e) { /* leere Zeile */ }
+      }
+      if (url && url.startsWith('https://') && new URL(url).origin !== location.origin) {
+        const next = new URL(url);
+        next.search = location.search;
+        toast('Sitzung gefunden – wechsle zur aktuellen Adresse…', 3000);
+        setTimeout(() => { location.href = next.href; }, 800);
+      }
+    } catch (e) { /* nicht gefunden, weiter warten */ }
+  }
+
   /* ======================================================================
-   * Bild
+   * Zeigen per 5-fach-Klick
+   *
+   * Fünf schnelle Klicks auf dieselbe Stelle schicken dem, dessen Bildschirm
+   * groß zu sehen ist, eine Markierung – nur wenn er das erlaubt hat. Einzelne
+   * Klicks tun nichts, damit es beim normalen Zuschauen nicht stört.
    * ==================================================================== */
 
-  let asm = { seq: -1, parts: [], got: 0 };
-  let vasm = { seq: -1, parts: [], got: 0, key: false };
-  let decoding = false, pendingBlob = null;
-
-  /* H.264 über WebCodecs: Die Grafikkarte des Zuschauers dekodiert, das Bild
-   * landet ohne Umweg im Canvas. Geht nur in sicheren Kontexten (https,
-   * localhost) – darum ist der Internet-Link der Normalfall. */
-  const vdec = { dec: null, codec: '', waitKey: true, ts: 0, meta: '', unsupported: false };
-
-  function spsCodec(au) {
-    for (let i = 0; i + 7 < au.length; i++) {
-      if (au[i] === 0 && au[i + 1] === 0 && au[i + 2] === 1 && (au[i + 3] & 0x1f) === 7) {
-        const h = (b) => b.toString(16).padStart(2, '0');
-        return `avc1.${h(au[i + 4])}${h(au[i + 5])}${h(au[i + 6])}`;
-      }
-    }
-    return '';
+  const clicks = [];
+  function onPointerDown(e, id) {
+    if (id !== focusedId || e.button !== 0) return;
+    const src = focused();
+    if (!src.meta || !src.meta.point || !src.w) return;
+    const now = performance.now();
+    while (clicks.length && now - clicks[0].t > 1500) clicks.shift();
+    if (clicks.length && Math.hypot(e.clientX - clicks[0].x, e.clientY - clicks[0].y) > 40) clicks.length = 0;
+    clicks.push({ t: now, x: e.clientX, y: e.clientY });
+    ripple(e.clientX, e.clientY, false);
+    if (clicks.length < 5) return;
+    clicks.length = 0;
+    const pos = imagePosition(src.canvas, e.clientX, e.clientY);
+    if (!pos) return;
+    send({ t: 'point', src: id, x: pos.x, y: pos.y });
+    ripple(e.clientX, e.clientY, true);
+    toast(`${displayName(src)} sieht jetzt, wo du hinzeigst`);
   }
 
-  function configureVideo(codec) {
-    if (vdec.dec && vdec.dec.state !== 'closed') vdec.dec.close();
-    vdec.dec = new VideoDecoder({
-      output: onVideoFrame,
-      error: () => { vdec.waitKey = true; vdec.codec = ''; },
-    });
-    vdec.dec.configure({ codec, optimizeForLatency: true });
-    vdec.codec = codec;
-    vdec.waitKey = true;
+  // imagePosition rechnet den Klick in die Bildkoordinaten 0..1 um – auch
+  // wenn das Bild eingepasst ist und Ränder hat.
+  function imagePosition(canvas, cx, cy) {
+    const r = canvas.getBoundingClientRect();
+    const fit = getComputedStyle(canvas).objectFit;
+    let dw = r.width, dh = r.height;
+    if (fit === 'contain') {
+      const aspect = canvas.width / canvas.height;
+      if (r.width / r.height > aspect) { dh = r.height; dw = dh * aspect; } else { dw = r.width; dh = dw / aspect; }
+    } else if (fit === 'none') {
+      dw = canvas.width; dh = canvas.height;
+    }
+    const ox = r.left + (r.width - dw) / 2, oy = r.top + (r.height - dh) / 2;
+    const x = (cx - ox) / dw, y = (cy - oy) / dh;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+    return { x, y };
   }
 
-  function onVideoAU(au, key) {
-    if (!('VideoDecoder' in window)) {
-      if (!vdec.unsupported) {
-        vdec.unsupported = true;
-        lastError = 'Dieser Browser kann das Video hier nicht abspielen. Öffne den Link über https (Streamer: Verbindung „Überall“) oder bitte den Streamer um den Kompatibilitätsmodus.';
-        setState('error');
-      }
-      return;
-    }
-    if (key) {
-      const codec = spsCodec(au) || vdec.meta;
-      if (codec && (codec !== vdec.codec || !vdec.dec || vdec.dec.state === 'closed')) {
-        try { configureVideo(codec); } catch (e) { return; }
-      }
-    }
-    if (!vdec.dec || vdec.dec.state !== 'configured') return;
-    if (vdec.waitKey) {
-      if (!key) return;
-      vdec.waitKey = false;
-    }
-    // Kommt der Decoder nicht hinterher, lieber zum nächsten Keyframe springen.
-    if (!key && vdec.dec.decodeQueueSize > 8) {
-      vdec.waitKey = true;
-      return;
-    }
-    vdec.ts += 16667;
-    try {
-      vdec.dec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: vdec.ts, data: au }));
-    } catch (e) {
-      vdec.waitKey = true;
-    }
+  function ripple(x, y, big) {
+    const el = document.createElement('div');
+    el.className = 'ripple' + (big ? ' big' : '');
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1300);
   }
 
-  function onVideoFrame(frame) {
-    if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
-      canvas.width = frame.displayWidth;
-      canvas.height = frame.displayHeight;
-    }
-    frameW = frame.displayWidth;
-    frameH = frame.displayHeight;
-    ctx2d.drawImage(frame, 0, 0);
-    frame.close();
-    framesDrawn++;
-    if (!hasFrame) {
-      hasFrame = true;
-      if (state === 'waiting') setState('live');
-    }
-  }
-
-  function onBinary(buf) {
-    bytesIn += buf.byteLength;
-    const v = new DataView(buf);
-    const type = v.getUint8(0);
-    if (type === 4) {
-      if (buf.byteLength < 17) return;
-      const seq = v.getUint32(1, true);
-      const idx = v.getUint16(13, true);
-      const count = v.getUint16(15, true);
-      if (seq !== asm.seq) asm = { seq, parts: new Array(count), got: 0 };
-      if (!asm.parts[idx]) {
-        asm.parts[idx] = new Uint8Array(buf, 17);
-        asm.got++;
-      }
-      if (asm.got === count) {
-        frameW = v.getUint16(9, true);
-        frameH = v.getUint16(11, true);
-        showFrame(new Blob(asm.parts, { type: 'image/jpeg' }));
-        asm = { seq: -1, parts: [], got: 0 };
-      }
-    } else if (type === 5) {
-      if (buf.byteLength < 17) return;
-      const seq = v.getUint32(1, true);
-      const idx = v.getUint16(13, true);
-      const count = v.getUint16(15, true);
-      if (seq !== vasm.seq) vasm = { seq, parts: new Array(count), got: 0, key: v.getUint16(9, true) === 1 };
-      if (!vasm.parts[idx]) {
-        vasm.parts[idx] = new Uint8Array(buf, 17);
-        vasm.got++;
-      }
-      if (vasm.got === count) {
-        const total = vasm.parts.reduce((n, p) => n + p.length, 0);
-        const au = new Uint8Array(total);
-        let off = 0;
-        for (const p of vasm.parts) { au.set(p, off); off += p.length; }
-        onVideoAU(au, vasm.key);
-        vasm = { seq: -1, parts: [], got: 0, key: false };
-      }
-    } else if (type === 1) {
-      if (buf.byteLength <= 13) return;
-      frameW = v.getUint16(9, true);
-      frameH = v.getUint16(11, true);
-      showFrame(new Blob([new Uint8Array(buf, 13)], { type: 'image/jpeg' }));
-    } else if (type === 2) {
-      onPCM(new Uint8Array(buf, 9));
-    } else if (type === 3) {
-      onSilence();
-    } else if (type === 6) {
-      voice.onPacket(buf);
-    }
-  }
-
-  // Immer nur das neueste Bild dekodieren – liegt eins in der Warteschlange,
-  // wird es durch das neue ersetzt.
-  function showFrame(blob) {
-    if (decoding) { pendingBlob = blob; return; }
-    decoding = true;
-    createImageBitmap(blob).then((bmp) => {
-      if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
-        canvas.width = bmp.width;
-        canvas.height = bmp.height;
-      }
-      ctx2d.drawImage(bmp, 0, 0);
-      bmp.close();
-      framesDrawn++;
-      if (!hasFrame) {
-        hasFrame = true;
-        if (state === 'waiting') setState('live');
-      }
-    }).catch(() => { /* kaputtes Bild, egal */ }).finally(() => {
-      decoding = false;
-      if (pendingBlob) {
-        const next = pendingBlob;
-        pendingBlob = null;
-        showFrame(next);
-      }
-    });
+  function updatePointHint() {
+    const src = focused();
+    const on = !!(src.meta && src.meta.point) && state === 'live';
+    $('#point-hint').classList.toggle('hidden', !on);
   }
 
   /* ======================================================================
@@ -541,9 +748,9 @@ registerProcessor('mss-player', MssPlayer);`;
   const STATES = {
     connecting: { badge: ['wait', 'Verbinde'], text: 'Verbinde…', spin: true },
     approval: { badge: ['wait', 'Wartet'], text: 'Warte auf Freigabe…', fine: 'Der andere bekommt eine Meldung und lässt dich mit einem Klick rein.', spin: true },
-    waiting: { badge: ['wait', 'Gleich'], text: 'Gleich geht es los…', spin: true },
+    waiting: { badge: ['wait', 'Gleich'], text: 'Gleich geht es los…', fine: hostKey ? 'Hier erscheinen die Bildschirme der anderen, sobald sie teilen.' : '', spin: true },
     live: { badge: ['', 'Live'] },
-    paused: { badge: ['off', 'Pause'], text: 'Pausiert', fine: 'Der andere hat das Teilen kurz angehalten. Es geht automatisch weiter.' },
+    paused: { badge: ['off', 'Pause'], text: 'Pausiert', fine: 'Das Teilen ist kurz angehalten. Es geht automatisch weiter.' },
     reconnecting: { badge: ['wait', 'Verbinde'], text: 'Verbindung unterbrochen…', fine: 'Wird automatisch wiederhergestellt.', spin: true },
     offline: { badge: ['off', 'Offline'], text: 'Gerade wird nichts geteilt', fine: 'Sobald der andere wieder teilt, bist du automatisch dabei – einfach offen lassen.', spin: true },
     denied: { badge: ['off', 'Abgelehnt'], text: 'Der andere hat die Anfrage abgelehnt.', btn: 'Erneut anfragen' },
@@ -565,17 +772,20 @@ registerProcessor('mss-player', MssPlayer);`;
     btn.classList.toggle('hidden', !s.btn);
     if (s.btn) btn.textContent = s.btn;
     // Bei Pause bleibt das letzte Bild gedimmt sichtbar.
-    ov.style.background = next === 'paused' && hasFrame ? 'rgba(17,18,20,.6)' : '';
+    ov.style.background = next === 'paused' && focused().hasFrame ? 'rgba(17,18,20,.6)' : '';
     if (next !== 'live') document.body.classList.remove('idle');
     renderTitle();
     updateAudioUI();
+    updatePointHint();
+    updateShareButton();
   }
 
   function renderTitle() {
-    const who = hostName || room;
+    const src = focused();
+    const who = displayName(src) || room;
     $('#title').textContent = who;
     const bits = [];
-    if (targetTitle) bits.push(targetTitle);
+    if (src.meta && src.meta.title) bits.push(src.meta.title);
     if (viewers > 1) bits.push(`${viewers} schauen zu`);
     $('#sub').textContent = bits.join(' · ');
     document.title = (state === 'live' ? '● ' : '') + who + ' – Zuschauen';
@@ -593,7 +803,9 @@ registerProcessor('mss-player', MssPlayer);`;
 
     if (audio.core) audio.stats = audio.core.stats();
     if (!$('#stats-panel').classList.contains('hidden')) {
-      $('#stat-res').textContent = frameW ? `${frameW}×${frameH} · ${videoKind}` : '–';
+      const src = focused();
+      const kind = src.meta && src.meta.video === 'h264' ? 'H.264' : 'JPEG';
+      $('#stat-res').textContent = src.w ? `${src.w}×${src.h} · ${kind}` : '–';
       $('#stat-fps').textContent = String(fps);
       $('#stat-rate').textContent = fmtRate(kbps);
       $('#stat-ping').textContent = rtt ? `${Math.round(rtt)} ms` : '–';
@@ -624,30 +836,33 @@ registerProcessor('mss-player', MssPlayer);`;
     else $('#stage').requestFullscreen().catch(() => {});
   }
 
-  let pipVideo = null;
+  // Bild-in-Bild zeigt den groß gezeigten Bildschirm.
+  let pipVideo = null, pipSource = -1;
   async function togglePiP() {
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
         return;
       }
-      if (!pipVideo) {
+      const src = focused();
+      if (!pipVideo || pipSource !== src.id) {
         pipVideo = document.createElement('video');
         pipVideo.muted = true;
         pipVideo.playsInline = true;
-        pipVideo.srcObject = canvas.captureStream();
+        pipVideo.srcObject = src.canvas.captureStream();
+        pipSource = src.id;
         pipVideo.addEventListener('leavepictureinpicture', () => $('#btn-pip').classList.remove('on'));
         pipVideo.addEventListener('enterpictureinpicture', () => $('#btn-pip').classList.add('on'));
       }
       // Einmal neu malen, damit der Videostrom sofort ein Bild hat.
-      if (canvas.width) ctx2d.drawImage(canvas, 0, 0);
+      if (src.canvas.width) src.ctx.drawImage(src.canvas, 0, 0);
       await pipVideo.play();
       await pipVideo.requestPictureInPicture();
     } catch (e) {
       toast('Bild-in-Bild geht in diesem Browser nicht');
     }
   }
-  if (!document.pictureInPictureEnabled || !canvas.captureStream) $('#btn-pip').classList.add('hidden');
+  if (!document.pictureInPictureEnabled || !HTMLCanvasElement.prototype.captureStream) $('#btn-pip').classList.add('hidden');
 
   function toggleFit() {
     const native = $('#screen-wrap').classList.toggle('native');
@@ -728,11 +943,45 @@ registerProcessor('mss-player', MssPlayer);`;
   $('#btn-pip').addEventListener('click', togglePiP);
   $('#btn-fit').addEventListener('click', toggleFit);
   $('#btn-stats').addEventListener('click', toggleStats);
-  canvas.addEventListener('dblclick', toggleFullscreen);
 
   $('#overlay-btn').addEventListener('click', () => {
     reconnectDelay = 1000;
     connect();
+  });
+
+  /* ---------- Eigenen Bildschirm in die Konferenz teilen ---------- */
+
+  // Teilt die App auf diesem PC. Die Seite fragt nur – die App zeigt die
+  // Rückfrage in ihrem eigenen Fenster, erst dann wird gestreamt.
+  function updateShareButton() {
+    const can = !!localApp.base && !hostKey && ['live', 'waiting', 'paused'].includes(state);
+    $('#btn-share').classList.toggle('hidden', !can);
+  }
+
+  // Konferenz-Fenster der App mit ?present=<Code>: gleich teilen, ohne
+  // Rückfrage (die App kennt den Code, nur sie hat das Fenster geöffnet).
+  let autoPresentDone = false;
+  function maybeAutoPresent() {
+    const nonce = params.get('present');
+    if (autoPresentDone || !nonce || !localApp.base || !['live', 'waiting', 'paused'].includes(state)) return;
+    autoPresentDone = true;
+    fetch(localApp.base + '/api/present', {
+      method: 'POST',
+      body: JSON.stringify({ server: relayBase(), room, token: tokenFor(room), host: displayName(source(0)), nonce }),
+    }).then(() => toast('Dein Bildschirm wird jetzt geteilt', 3000)).catch(() => { autoPresentDone = false; });
+  }
+
+  $('#btn-share').addEventListener('click', async () => {
+    try {
+      const res = await fetch(localApp.base + '/api/present', {
+        method: 'POST',
+        body: JSON.stringify({ server: relayBase(), room, token: tokenFor(room), host: displayName(source(0)) }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'App antwortet nicht');
+      toast('Bestätige im Fenster deiner App, was du teilen willst', 5000);
+    } catch (e) {
+      toast('Teilen ging nicht: ' + e.message, 5000);
+    }
   });
 
   /* ---------- Sprachkanal ---------- */
@@ -740,10 +989,10 @@ registerProcessor('mss-player', MssPlayer);`;
   const overlay = MssOverlay.create({ base: () => localApp.base || null, platform: () => localApp.platform });
   const voice = MssVoice.create({
     send: (b) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(b); },
-    sendCtl: (o) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); },
+    sendCtl: send,
     canJoin: () => !selfGuard.self && !!ws && ws.readyState === WebSocket.OPEN && ['live', 'waiting', 'paused'].includes(state),
     joinHint: () => (selfGuard.self
-      ? 'Du schaust auf dem PC zu, der streamt – nimm den Sprachkanal im Panel der App, sonst gibt es eine Rückkopplung.'
+      ? 'Du schaust auf dem PC zu, der streamt – öffne im Panel „Konferenz öffnen“, dort geht der Sprachkanal ohne Rückkopplung.'
       : 'Geht, sobald der Streamer dich reingelassen hat.'),
     onChange: (v) => { overlay.publish(v.snapshot()); $('#btn-voice').classList.toggle('on', v.state.joined); },
     onOverlay: (v) => overlay.toggle(v.snapshot()),
@@ -755,6 +1004,15 @@ registerProcessor('mss-player', MssPlayer);`;
     voice.refresh();
   });
 
+  // Automatisch in den Sprachkanal (Konferenz-Fenster der App, ?voice=1).
+  let autoVoiceDone = false;
+  function maybeAutoVoice() {
+    if (autoVoiceDone || params.get('voice') !== '1') return;
+    autoVoiceDone = true;
+    if (params.get('muted') === '1') voice.setMuted(true);
+    voice.join();
+  }
+
   $('#btn-leave').addEventListener('click', () => {
     voice.leave();
     wantConnect = false;
@@ -762,7 +1020,8 @@ registerProcessor('mss-player', MssPlayer);`;
     audioSend({ reset: true });
     if (document.fullscreenElement) document.exitFullscreen();
     if (document.pictureInPictureElement) document.exitPictureInPicture();
-    hasFrame = false;
+    for (const id of [...sources.keys()]) dropSource(id);
+    source(0).hasFrame = false;
     showJoin();
   });
 
@@ -821,6 +1080,18 @@ registerProcessor('mss-player', MssPlayer);`;
     return v.toLowerCase();
   }
 
+  function enter() {
+    $('#join').classList.add('hidden');
+    $('#stage').classList.remove('hidden');
+    focusedId = 0;
+    reconnectDelay = 1000;
+    state = 'connecting';
+    layout();
+    checkSelf();
+    connect();
+    wake();
+  }
+
   $('#join-card').addEventListener('submit', (ev) => {
     ev.preventDefault();
     audioStart(); // der Klick auf "Zuschauen" schaltet den Ton frei
@@ -835,20 +1106,10 @@ registerProcessor('mss-player', MssPlayer);`;
     room = r;
     myName = $('#name-input').value.trim();
     store.set('mss-name', myName);
-    history.replaceState(null, '', `?room=${encodeURIComponent(room)}`);
-    $('#join').classList.add('hidden');
-    $('#stage').classList.remove('hidden');
-    hostName = '';
-    targetTitle = '';
-    hostPaused = false;
-    hasFrame = false;
-    vdec.waitKey = true;
-    vdec.unsupported = false;
-    reconnectDelay = 1000;
-    state = 'connecting';
-    checkSelf();
-    connect();
-    wake();
+    const keep = new URLSearchParams(params);
+    keep.set('room', room);
+    history.replaceState(null, '', `?${keep}`);
+    enter();
   });
 
   /* ---------- Start ---------- */
@@ -861,6 +1122,14 @@ registerProcessor('mss-player', MssPlayer);`;
     $('#stats-panel').classList.remove('hidden');
     $('#btn-stats').classList.add('on');
   }
+  source(0);
+  if (params.get('name')) myName = params.get('name');
   updateAudioUI();
-  showJoin();
+  // Gastgeber und Konferenz-Fenster der App steigen ohne Namensabfrage ein.
+  if (room && (hostKey || params.get('auto') === '1')) {
+    if (hostKey && !myName) myName = 'Gastgeber';
+    enter();
+  } else {
+    showJoin();
+  }
 })();

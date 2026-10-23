@@ -34,6 +34,23 @@
   </section>
 
   <!-- Anfragen ganz oben, damit man sie nicht übersieht -->
+  <section class="card update-card hidden" id="present-card">
+    <div class="update-text">
+      <b id="present-title">Bildschirm teilen?</b>
+      <span id="present-sub" class="dim small">Es wird geteilt, was unten unter „Was willst du teilen?“ ausgewählt ist.</span>
+    </div>
+    <button class="btn ghost" id="btn-present-no" type="button">Ablehnen</button>
+    <button class="btn primary" id="btn-present-yes" type="button">Teilen</button>
+  </section>
+
+  <section class="card update-card hidden" id="presenting-card">
+    <div class="update-text">
+      <b id="presenting-title">Du teilst in einer Konferenz</b>
+      <span id="presenting-sub" class="dim small"></span>
+    </div>
+    <button class="btn danger" id="btn-present-stop" type="button">Teilen beenden</button>
+  </section>
+
   <section class="card requests hidden" id="requests-card" aria-live="polite">
     <h2>Möchte zuschauen</h2>
     <div id="requests"></div>
@@ -86,10 +103,19 @@
     <div class="link-box">
       <span id="share-url" class="url pending">Wird vorbereitet…</span>
       <button class="btn primary" id="btn-copy" type="button" disabled>Kopieren</button>
-      <button class="btn ghost" id="btn-open-viewer" type="button" title="Eigenen Stream im Browser ansehen" disabled>Ansehen</button>
+      <button class="btn ghost" id="btn-open-viewer" type="button" title="Konferenz öffnen: alle geteilten Bildschirme, Sprachkanal" disabled>Konferenz öffnen</button>
     </div>
     <p class="link-note" id="link-note"></p>
     <div class="viewers" id="viewers" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card">
+    <h2>Konferenz beitreten</h2>
+    <div class="row">
+      <input id="join-target" placeholder="Sitzungs-ID oder Link des anderen" spellcheck="false">
+      <button class="btn primary fixed" id="btn-join-conf" type="button">Beitreten</button>
+    </div>
+    <p class="link-note">Öffnet die Konferenz im eigenen Fenster. Dort siehst du alle geteilten Bildschirme, kannst deinen eigenen dazuteilen und sprechen.</p>
   </section>
 
   <section class="card">
@@ -176,6 +202,14 @@
         <input type="checkbox" id="cfg-auto">
         <span class="label"><b>Alle sofort reinlassen</b><span>Ohne Nachfrage – praktisch im festen Team</span></span>
       </label>
+      <div class="field full hidden" id="trusted-field">
+        <span>Dürfen immer rein</span>
+        <div id="trusted-list"></div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="cfg-pointing">
+        <span class="label"><b>Zeigen erlauben</b><span>Klickt jemand 5× schnell auf eine Stelle im Stream, erscheint dort bei dir eine Markierung</span></span>
+      </label>
       <label class="field">
         <span>Dein Name (sehen die Zuschauer)</span>
         <input id="cfg-name" maxlength="32" placeholder="Dein Name">
@@ -201,6 +235,29 @@
         <span>Adresse deines Servers</span>
         <input id="cfg-server" placeholder="https://share.example.com" spellcheck="false">
       </label>
+
+      <div class="section-title">Beim Start</div>
+      <label class="switch">
+        <input type="checkbox" id="cfg-auto-share">
+        <span class="label"><b>Bildschirm automatisch teilen</b><span>Sobald die App läuft, ist dein Link bereit und dein Bild an</span></span>
+      </label>
+      <label class="field">
+        <span>Konferenz automatisch beitreten</span>
+        <input id="cfg-auto-join" placeholder="Sitzungs-ID des anderen (leer = keine)" spellcheck="false">
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="cfg-auto-present">
+        <span class="label"><b>Dort meinen Bildschirm teilen</b><span>Ohne Rückfrage, sobald du drin bist</span></span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="cfg-auto-voice">
+        <span class="label"><b>Sprachkanal beitreten</b><span>In der Konferenz oben – oder in deiner eigenen</span></span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="cfg-auto-muted">
+        <span class="label"><b>Dabei stumm</b><span>Mikrofon aus, bis du es einschaltest (Strg+Umschalt+M)</span></span>
+      </label>
+      <p class="link-note full">Zusammen mit „Beim Anmelden starten“ seid ihr nach dem Hochfahren automatisch verbunden. Tipp: Den anderen einmal mit „Immer reinlassen“ freigeben, dann klappt es ganz ohne Nachfrage.</p>
 
       <div class="section-title">System</div>
       <label class="switch">

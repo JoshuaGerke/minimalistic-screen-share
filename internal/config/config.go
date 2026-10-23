@@ -14,6 +14,12 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/capture"
 )
 
+// TrustedPerson ist jemand, der dauerhaft reindarf ("Immer reinlassen").
+type TrustedPerson struct {
+	Name  string `json:"name"`
+	Token string `json:"token"`
+}
+
 // Erreichbarkeit: Wie Zuschauer zum Stream kommen.
 const (
 	ReachInternet = "internet" // eingebauter Relay + Tunnel, Link funktioniert überall
@@ -35,6 +41,16 @@ type Config struct {
 	AutoAccept bool     `json:"auto_accept"`
 	MutedApps  []string `json:"muted_apps,omitempty"`
 	Diagnose   bool     `json:"diagnose,omitempty"` // Leistungsdaten alle 2 s ins Log
+	Pointing   bool     `json:"pointing,omitempty"` // Zuschauer dürfen per 5-fach-Klick zeigen
+	// Trusted: Personen, die immer ohne Nachfrage reindürfen.
+	Trusted []TrustedPerson `json:"trusted,omitempty"`
+	// Beim Start: eigenen Bildschirm teilen, einer Konferenz beitreten (ID
+	// oder Link), dort automatisch teilen, Sprachkanal (stumm) beitreten.
+	AutoShare   bool   `json:"auto_share,omitempty"`
+	AutoJoin    string `json:"auto_join,omitempty"`
+	AutoPresent bool   `json:"auto_present,omitempty"`
+	AutoVoice   bool   `json:"auto_voice,omitempty"`
+	AutoMuted   bool   `json:"auto_muted,omitempty"`
 	// Position des Sprach-Overlays (nur gültig, wenn OverlaySet).
 	OverlayX   int            `json:"overlay_x,omitempty"`
 	OverlayY   int            `json:"overlay_y,omitempty"`
@@ -164,6 +180,10 @@ func Load() Config {
 	cfg.AutoAccept = loaded.AutoAccept
 	cfg.MutedApps = loaded.MutedApps
 	cfg.Diagnose = loaded.Diagnose
+	cfg.Pointing = loaded.Pointing
+	cfg.Trusted = loaded.Trusted
+	cfg.AutoShare, cfg.AutoJoin, cfg.AutoPresent = loaded.AutoShare, loaded.AutoJoin, loaded.AutoPresent
+	cfg.AutoVoice, cfg.AutoMuted = loaded.AutoVoice, loaded.AutoMuted
 	cfg.OverlayX, cfg.OverlayY, cfg.OverlaySet = loaded.OverlayX, loaded.OverlayY, loaded.OverlaySet
 	if loaded.Target.Kind != "" {
 		cfg.Target = loaded.Target

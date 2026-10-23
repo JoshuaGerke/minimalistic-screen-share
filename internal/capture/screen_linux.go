@@ -164,6 +164,7 @@ func (s *grimSource) Grab() (*image.RGBA, error) {
 type hyprMonitor struct {
 	Name       string
 	X, Y, W, H int
+	Scale      float64
 	Focused    bool
 }
 
@@ -180,14 +181,15 @@ func hyprMonitors() ([]hyprMonitor, error) {
 	var raw []struct {
 		Name                string `json:"name"`
 		X, Y, Width, Height int
-		Focused             bool `json:"focused"`
+		Scale               float64 `json:"scale"`
+		Focused             bool    `json:"focused"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, err
 	}
 	mons := make([]hyprMonitor, len(raw))
 	for i, m := range raw {
-		mons[i] = hyprMonitor{Name: m.Name, X: m.X, Y: m.Y, W: m.Width, H: m.Height, Focused: m.Focused}
+		mons[i] = hyprMonitor{Name: m.Name, X: m.X, Y: m.Y, W: m.Width, H: m.Height, Scale: m.Scale, Focused: m.Focused}
 	}
 	return mons, nil
 }
@@ -351,4 +353,37 @@ func HyprMonitorName(index int) (string, error) {
 		return "", fmt.Errorf("Monitor %d gibt es nicht", index+1)
 	}
 	return mons[index].Name, nil
+}
+
+// Bounds liefert, wo das Ziel auf dem Bildschirm liegt – in den logischen
+// Koordinaten von Hyprland, wie sie "hyprctl dispatch movecursor" erwartet.
+func Bounds(t Target) (Rect, error) {
+	switch t.Kind {
+	case "region":
+		return t.Region, nil
+	case "monitor":
+		mons, err := hyprMonitors()
+		if err != nil {
+			return Rect{}, err
+		}
+		if t.Monitor < 0 || t.Monitor >= len(mons) {
+			return Rect{}, fmt.Errorf("Monitor %d gibt es nicht", t.Monitor+1)
+		}
+		m := mons[t.Monitor]
+		sc := m.Scale
+		if sc <= 0 {
+			sc = 1
+		}
+		return Rect{X: m.X, Y: m.Y, W: int(float64(m.W) / sc), H: int(float64(m.H) / sc)}, nil
+	case "window":
+		clients, err := hyprClients()
+		if err != nil {
+			return Rect{}, err
+		}
+		if c, ok := findHyprClient(clients, t.Window); ok {
+			return Rect{X: c.X, Y: c.Y, W: c.W, H: c.H}, nil
+		}
+		return Rect{}, fmt.Errorf("Fenster %q nicht gefunden", t.Window)
+	}
+	return Rect{}, errors.New("für dieses Ziel nicht verfügbar")
 }
