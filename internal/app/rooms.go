@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"io"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -194,32 +195,44 @@ func wsURL(base string) string {
 	return base + "/ws"
 }
 
-var healthClient = http.Client{Timeout: 5 * time.Second}
+var (
+	healthClient = http.Client{Timeout: 5 * time.Second}
+	lanClient    = http.Client{Timeout: 1500 * time.Millisecond}
+)
 
-// alive prüft, ob unter base der Raum wirklich betrieben wird.
-func alive(base, id string) bool {
-	res, err := healthClient.Get(strings.TrimRight(base, "/") + "/healthz?room=" + id)
+// alive prüft, ob unter base der Raum wirklich betrieben wird – und zwar
+// vom Programmstart host (leer: egal von wem).
+func alive(c *http.Client, base, id, host string) bool {
+	res, err := c.Get(strings.TrimRight(base, "/") + "/healthz?room=" + id)
 	if err != nil {
 		return false
 	}
-	res.Body.Close()
-	return res.StatusCode == http.StatusOK
+	defer res.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 128))
+	return res.StatusCode == http.StatusOK && (host == "" || string(body) == host)
 }
 
-// findHost sucht den frühesten erreichbaren Betreiber (außer own).
-func findHost(id, own string) (rendezvous.Entry, bool) {
+// findHost sucht den frühesten erreichbaren Betreiber (außer self) und die
+// Adresse, über die er zu erreichen ist – im selben Netzwerk direkt.
+func findHost(id, self string) (rendezvous.Entry, string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	entries, err := rendezvous.Entries(ctx, id)
 	if err != nil {
-		return rendezvous.Entry{}, false
+		return rendezvous.Entry{}, "", false
 	}
 	for _, e := range entries {
-		if e.URL != own && alive(e.URL, id) {
-			return e, true
+		if self != "" && e.Host == self {
+			continue
+		}
+		if e.LAN != "" && alive(&lanClient, e.LAN, id, e.Host) {
+			return e, e.LAN, true
+		}
+		if e.URL != "" && alive(&healthClient, e.URL, id, e.Host) {
+			return e, e.URL, true
 		}
 	}
-	return rendezvous.Entry{}, false
+	return rendezvous.Entry{}, "", false
 }
 
 func (a *App) sleep(rc *roomConn, d time.Duration) bool {
@@ -239,9 +252,13 @@ func (a *App) roomLoop(rc *roomConn) {
 			return
 		default:
 		}
-		if e, ok := findHost(rc.ID, ""); ok {
-			a.setRoom(rc, "drin", wsURL(e.URL), false, "")
-			a.log.Printf("Raum %q: betrieben von %s", rc.ID, e.URL)
+		if e, base, ok := findHost(rc.ID, a.origin); ok {
+			a.setRoom(rc, "drin", wsURL(base), false, "")
+			how := "über das Internet"
+			if base == e.LAN {
+				how = "direkt im Netzwerk"
+			}
+			a.log.Printf("Raum %q: betrieben von %s (%s)", rc.ID, base, how)
 			a.afterConnect(rc)
 			// Läuft der Betreiber noch? Zweimal hintereinander weg = neu suchen.
 			misses := 0
@@ -249,7 +266,7 @@ func (a *App) roomLoop(rc *roomConn) {
 				if !a.sleep(rc, 3*time.Second) {
 					return
 				}
-				if alive(e.URL, rc.ID) {
+				if alive(&healthClient, base, rc.ID, e.Host) {
 					misses = 0
 				} else {
 					misses++
@@ -291,28 +308,29 @@ func (a *App) hostRoom(rc *roomConn) error {
 		}
 	}()
 
-	published, ourTime := "", int64(0)
+	var published rendezvous.Entry
+	ourTime := int64(0)
 	for {
-		// Adresse (neu) veröffentlichen, sobald sie steht oder sich ändert.
-		if u := a.publicURL(); u != "" && u != published {
+		// Adressen (neu) veröffentlichen, sobald sie stehen oder sich ändern.
+		if e := a.published(); (e.URL != "" || e.LAN != "") && e != published {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			t, err := rendezvous.Publish(ctx, rc.ID, u)
+			t, err := rendezvous.Publish(ctx, rc.ID, e)
 			cancel()
 			if err == nil {
-				published = u
+				published = e
 				if ourTime == 0 {
 					ourTime = t
 				}
-				a.log.Printf("Raum %q: auffindbar unter %s", rc.ID, u)
+				a.log.Printf("Raum %q: auffindbar unter %s %s", rc.ID, e.URL, e.LAN)
 			}
 		}
 		if !a.sleep(rc, 4*time.Second) {
 			return nil
 		}
 		// Hat jemand früher übernommen? Dann abgeben und dort mitmachen.
-		if published != "" {
-			if e, ok := findHost(rc.ID, published); ok && e.Time < ourTime {
-				a.log.Printf("Raum %q: %s war früher da – gebe ab", rc.ID, e.URL)
+		if ourTime != 0 {
+			if e, base, ok := findHost(rc.ID, a.origin); ok && e.Time < ourTime {
+				a.log.Printf("Raum %q: %s war früher da – gebe ab", rc.ID, base)
 				return nil
 			}
 		}

@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// Der Browser rechnet denselben Kanal aus (viewer: topicFor) – beide müssen
-// übereinstimmen. Erwarteter Wert: sha256("mss-share:testraum")[:24].
+// Groß-/Kleinschreibung und Leerzeichen dürfen den Kanal nicht ändern.
 func TestTopic(t *testing.T) {
 	if got := Topic(" TestRaum "); got != Topic("testraum") || len(got) != 4+24 {
 		t.Fatalf("Topic unerwartet: %q", got)
@@ -23,16 +22,13 @@ func TestRoundTrip(t *testing.T) {
 		t.Skip("nur mit MSS_NET_TEST=1")
 	}
 	room := fmt.Sprintf("test-%d", time.Now().UnixNano())
-	want := "https://beispiel-" + room + ".trycloudflare.com"
+	want := Entry{URL: "https://beispiel-" + room + ".trycloudflare.com", LAN: "http://192.168.1.2:8080", Host: "abc"}
 	if _, err := Publish(context.Background(), room, want); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(1500 * time.Millisecond) // ntfy speichert leicht verzögert
-	got, err := Resolve(context.Background(), room)
-	if err != nil || got != want {
-		t.Fatalf("Resolve = %q, %v", got, err)
-	}
-	if _, err := Resolve(context.Background(), room+"-gibts-nicht"); err == nil {
-		t.Fatal("unbekannte ID gefunden")
+	got, err := Entries(context.Background(), room)
+	if err != nil || len(got) != 1 || got[0].URL != want.URL || got[0].LAN != want.LAN || got[0].Host != want.Host || got[0].Time == 0 {
+		t.Fatalf("Entries = %+v, %v", got, err)
 	}
 }

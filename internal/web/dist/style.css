@@ -410,8 +410,7 @@ a { color: #8ea1ff; }
 .side-top { padding: 14px 14px 10px; border-bottom: 1px solid var(--border-soft); max-height: 50%; overflow-y: auto; }
 .members { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
 .member { display: flex; align-items: center; gap: 10px; padding: 5px 6px; border-radius: 8px; }
-.member[title] { cursor: pointer; }
-.member[title]:hover { background: var(--hover); }
+.member .vol-btn { width: 28px; height: 28px; }
 .member .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
 .member:not(.in-voice) .name { color: var(--muted); }
 .member.speaking .avatar { box-shadow: 0 0 0 3px var(--green), 0 0 12px rgba(35, 165, 90, .7); }
@@ -419,7 +418,8 @@ a { color: #8ea1ff; }
 .member .flags i { display: grid; place-items: center; }
 .member .flags .off { color: var(--red); }
 .member .flags .live { color: #f87171; }
-.member-vol { padding: 0 6px 6px 46px; }
+.member-vol { display: flex; align-items: center; gap: 8px; padding: 0 6px 6px 46px; }
+.member-vol span { width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
 .voice-members { display: none; }
 
 .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }

@@ -18,6 +18,7 @@ import (
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/config"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/diag"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/overlay"
+	"github.com/JoshuaGerke/minimalistic-screen-share/internal/rendezvous"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/room"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/share"
 	"github.com/JoshuaGerke/minimalistic-screen-share/internal/tunnel"
@@ -39,7 +40,6 @@ type App struct {
 	relay     *room.Server
 	relaySrv  *http.Server
 	relayPort int
-	relayLAN  bool // lauscht auf allen Schnittstellen (sonst nur 127.0.0.1)
 
 	tunnel     *tunnel.Tunnel
 	tunnelURL  string
@@ -56,7 +56,10 @@ type App struct {
 func New(log *log.Logger, cfg config.Config) *App {
 	b := make([]byte, 12)
 	rand.Read(b)
-	return &App{log: log, cfg: cfg, relay: room.New(log), origin: hex.EncodeToString(b)}
+	origin := hex.EncodeToString(b)
+	relay := room.New(log)
+	relay.Self = origin
+	return &App{log: log, cfg: cfg, relay: relay, origin: origin}
 }
 
 func (a *App) Config() config.Config {
@@ -77,9 +80,8 @@ func (a *App) SaveConfig(c config.Config) error {
 	reachChanged := a.cfg.Reach != c.Reach
 	a.cfg = c
 	a.mu.Unlock()
-	if rc := a.current(); reachChanged && rc != nil && a.hosting() {
-		// Neu betreten: Relay und Tunnel kommen passend wieder hoch.
-		go a.enterRoom(rc.ID, rc.Keys, false, false, false)
+	if reachChanged && a.hosting() {
+		a.ensureReach()
 	}
 	return nil
 }
@@ -214,32 +216,22 @@ func (a *App) OpenWindow() {
 
 /* ---------- Relay und Tunnel: nur wenn dieser PC einen Raum betreibt ---------- */
 
-// startRelay bringt den Relay im eigenen Prozess hoch. Über den Tunnel
-// reicht 127.0.0.1 (keine Firewall-Abfrage); nur fürs Netzwerk lauscht er
-// auf allen Schnittstellen.
+// startRelay bringt den Relay im eigenen Prozess hoch. Er lauscht auf allen
+// Schnittstellen: Wer im selben Netzwerk sitzt, verbindet sich direkt statt
+// über den Tunnel (viel weniger Verzögerung).
 func (a *App) startRelay() (int, error) {
-	lan := a.Config().Reach == config.ReachLAN
 	a.mu.Lock()
-	if a.relaySrv != nil && a.relayLAN == lan {
+	if a.relaySrv != nil {
 		p := a.relayPort
 		a.mu.Unlock()
 		return p, nil
 	}
-	old := a.relaySrv
-	a.relaySrv = nil
 	a.mu.Unlock()
-	if old != nil {
-		old.Close()
-	}
-	host := "127.0.0.1"
-	if lan {
-		host = ""
-	}
 	var ln net.Listener
 	var port int
 	var err error
 	for port = 8080; port <= 8090; port++ {
-		if ln, err = net.Listen("tcp", fmt.Sprintf("%s:%d", host, port)); err == nil {
+		if ln, err = net.Listen("tcp", fmt.Sprintf(":%d", port)); err == nil {
 			break
 		}
 	}
@@ -249,7 +241,7 @@ func (a *App) startRelay() (int, error) {
 	srv := &http.Server{Handler: a.relay.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	a.mu.Lock()
-	a.relaySrv, a.relayPort, a.relayLAN = srv, port, lan
+	a.relaySrv, a.relayPort = srv, port
 	a.mu.Unlock()
 	return port, nil
 }
@@ -322,20 +314,22 @@ func (a *App) stopTunnel() {
 	}
 }
 
-// publicURL ist die Adresse, unter der andere den Raum auf diesem PC finden.
-func (a *App) publicURL() string {
+// published sind die Adressen, unter denen andere den Raum auf diesem PC
+// finden: der Tunnel (nur bei "Überall") und das eigene Netzwerk.
+func (a *App) published() rendezvous.Entry {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.relayPort == 0 {
-		return ""
+		return rendezvous.Entry{}
 	}
+	e := rendezvous.Entry{Host: a.origin}
 	if a.cfg.Reach == config.ReachInternet {
-		return a.tunnelURL
+		e.URL = a.tunnelURL
 	}
-	if !a.relayLAN {
-		return ""
+	if ip := localIP(); ip != "127.0.0.1" {
+		e.LAN = fmt.Sprintf("http://%s:%d", ip, a.relayPort)
 	}
-	return fmt.Sprintf("http://%s:%d", localIP(), a.relayPort)
+	return e
 }
 
 // localIP liefert die LAN-Adresse dieses Rechners.

@@ -8,7 +8,7 @@ Ein kleines Programm für Räume: Raum-ID und Passwort eingeben, drin. Im Raum s
 
 - **Räume statt Links:** Raum-ID und Passwort ausmachen, jeder gibt beides ein. Gibt es den Raum noch nicht, legt ihn der Erste damit an.
 - **Ende-zu-Ende verschlüsselt:** Aus Raum-ID und Passwort entsteht auf jedem PC derselbe Schlüssel (PBKDF2, 310 000 Runden). Bild, Systemton, Stimme, Chat, Dateien, Zeige-Klicks und Namen gehen nur mit AES-256-GCM verschlüsselt raus. Wer den Raum weiterleitet, sieht nur Größe und Art der Pakete, aber keinen Inhalt.
-- **Kein Server nötig:** Wer zuerst da ist, betreibt den Raum in seiner App und macht ihn über einen kostenlosen Cloudflare-Tunnel erreichbar. Geht er, übernimmt nach ein paar Sekunden automatisch ein anderer. Gefunden wird der Raum über ntfy.sh, dort steht nur die Tunnel-Adresse unter einem Hash der Raum-ID.
+- **Kein Server nötig:** Wer zuerst da ist, betreibt den Raum in seiner App und macht ihn über einen kostenlosen Cloudflare-Tunnel erreichbar. Wer im selben Netzwerk sitzt, verbindet sich direkt, ohne Umweg übers Internet. Geht er, übernimmt nach ein paar Sekunden automatisch ein anderer. Gefunden wird der Raum über ntfy.sh, dort steht nur die Tunnel-Adresse unter einem Hash der Raum-ID.
 - **Sprachkanal wie bei Discord:** Opus bis 510 kbit/s in Stereo, Echo- und Rauschunterdrückung, automatische Lautstärke, Sprachaktivierung mit Pegel oder Push-to-Talk, stumm/taub, Lautstärke für jede Person.
 - **Bildschirm teilen, alle gleichzeitig:** Aufnahme und H.264 laufen auf der Grafikkarte (Windows: Desktop Duplication + NVENC/AMF/QuickSync, Linux: wf-recorder + VAAPI). Dekodiert wird im Fenster per WebCodecs. 1440p mit 60 fps kostet ein paar Prozent eines Kerns. Auf Wunsch teilst du den Systemton mit, ohne die Stimmen aus dem Raum.
 - **Chat und Dateien:** Nachrichten, Links und Bilder aus der Zwischenablage. Dateien bis 2 GB schickst du per Büroklammer oder ziehst sie ins Fenster.
@@ -22,7 +22,7 @@ Ein kleines Programm für Räume: Raum-ID und Passwort eingeben, drin. Im Raum s
 
 ### Windows
 
-[`MinimalisticScreenShare.exe`](https://github.com/JoshuaGerke/minimalistic-screen-share/releases/latest/download/MinimalisticScreenShare.exe) herunterladen und doppelklicken. Die exe installiert sich ohne Admin-Rechte nach `%LOCALAPPDATA%\Programs\minimalistic-screen-share`, legt einen Startmenü-Eintrag an und öffnet das Fenster. Das Fenster läuft als App-Fenster von Edge, das bei Windows dabei ist.
+[`MinimalisticScreenShare.exe`](https://github.com/JoshuaGerke/minimalistic-screen-share/releases/latest/download/MinimalisticScreenShare.exe) herunterladen und doppelklicken. Die exe installiert sich ohne Admin-Rechte nach `%LOCALAPPDATA%\Programs\minimalistic-screen-share`, legt einen Startmenü-Eintrag an und öffnet das Fenster. Das Fenster nutzt WebView2, dieselbe Chromium-Engine wie Electron, die bei Windows schon dabei ist. Es gibt also keinen Zusatz-Download und keinen Browser.
 
 - **Update:** Einstellungen → „Auf … aktualisieren“, oder die neue exe doppelklicken.
 - **Entfernen:** Einstellungen → Apps → Minimalistic Screen Share (oder `mss-share --uninstall`).
@@ -58,8 +58,8 @@ Unter Windows baut `.\build.ps1` die GUI-Version. Die Logs landen in `%APPDATA%\
 
 Wenn dein PC den Raum betreibt, steht unter **Einstellungen → Allgemein**:
 
-- **Überall (Standard):** eingebauter Relay hinter einem Cloudflare-Quick-Tunnel. `cloudflared` wird beim ersten Mal einmalig geladen (~40 MB). Der Relay lauscht dabei nur auf 127.0.0.1, die Firewall fragt also nicht nach.
-- **Nur im eigenen Netzwerk:** Der Relay lauscht im LAN auf Port 8080–8090, ganz ohne Internet-Dienste außer ntfy fürs Finden.
+- **Überall (Standard):** eingebauter Relay hinter einem Cloudflare-Quick-Tunnel. `cloudflared` wird beim ersten Mal einmalig geladen (~40 MB). Wer im selben Netzwerk ist, nimmt trotzdem den direkten Weg (Port 8080–8090). Fragt die Windows-Firewall beim ersten Mal nach, erlauben.
+- **Nur im eigenen Netzwerk:** kein Tunnel, nur der direkte Weg. ntfy dient nur noch zum Finden.
 
 ## Kommandozeile
 
@@ -84,6 +84,7 @@ Gegenproben ohne Browser: `node internal/web/e2e_check.cjs` (gleiches Paketforma
 ## Grenzen
 
 - Höchstens 16 Teilnehmer pro Raum (Personen und geteilte Bildschirme zusammen).
+- Kommt eine Leitung nicht hinterher, verwirft der Relay lieber: Bild, das älter als 400 ms ist, und Ton, der älter als 250 ms ist. Das Bild steht dann kurz bis zum nächsten Keyframe (alle 2 s), statt dauerhaft hinterherzuhängen.
 - Wer den Raum betreibt, schickt alles an alle. Bei vielen gleichzeitig geteilten Bildschirmen zählt sein Upload.
 - Dateien erreichen nur, wer beim Senden im Raum ist. Den Chat-Verlauf hält der Betreiber (verschlüsselt), bis der Raum umzieht.
 - Ein Passwort lässt sich nicht nachträglich ändern. Neues Passwort heißt neuer Raum, am besten mit neuer ID.

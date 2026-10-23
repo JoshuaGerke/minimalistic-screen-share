@@ -32,9 +32,13 @@ func appWindowArgs(url string) []string {
 // OpenConference öffnet eine Konferenz im eigenen Fenster; ohne passenden
 // Browser im normalen Standardbrowser.
 func (a *App) OpenConference(url string) {
+	if a.openNative(url) {
+		return
+	}
 	bin := appBrowser()
 	if bin == "" {
-		a.log.Printf("Konferenz-Fenster: kein Edge/Chromium gefunden, nehme den Standardbrowser")
+		a.log.Printf("Fenster: kein Chromium/Brave/Chrome/Edge gefunden, nehme den Standardbrowser")
+		a.notify("Chromium fehlt", "Für das App-Fenster Chromium installieren (z. B. sudo pacman -S chromium) – bis dahin im Standardbrowser.")
 		openURL(url)
 		return
 	}

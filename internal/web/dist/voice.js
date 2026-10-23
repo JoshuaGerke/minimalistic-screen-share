@@ -551,7 +551,7 @@ registerProcessor('mss-voice-player', MssVoicePlayer);`;
     }
 
     const api = {
-      mount, join, leave, setMembers, onPacket, listDevices, setMuted, setDeaf,
+      mount, join, leave, setMembers, onPacket, listDevices, setVolume, setMuted, setDeaf,
       get state() { return st; },
       get settings() { return settings; },
       // Für das Overlay: wer ist da, wer spricht gerade?

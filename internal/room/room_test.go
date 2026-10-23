@@ -186,3 +186,30 @@ func TestValidID(t *testing.T) {
 		}
 	}
 }
+
+func TestStale(t *testing.T) {
+	m := &member{needKey: map[uint32]bool{}, dropKey: map[uint32]bool{}}
+	pkt := func(kind, flags byte, idx uint16, age time.Duration) qitem {
+		b := make([]byte, e2e.HeaderLen+e2e.NonceLen+16)
+		e2e.Header{Kind: kind, Flags: flags, Sender: 7, Idx: idx, Count: 2}.Put(b)
+		return qitem{b, time.Now().Add(-age)}
+	}
+	if m.stale(pkt(e2e.KindVideo, 0, 0, 10*time.Millisecond)) {
+		t.Fatal("frisches Bild verworfen")
+	}
+	if !m.stale(pkt(e2e.KindVideo, 0, 1, time.Second)) {
+		t.Fatal("altes Bild nicht verworfen")
+	}
+	if !m.stale(pkt(e2e.KindVideo, 0, 0, 0)) {
+		t.Fatal("Delta nach Verwerfen gesendet")
+	}
+	if m.stale(pkt(e2e.KindVideo, e2e.FlagKey, 0, 0)) || m.stale(pkt(e2e.KindVideo, 0, 0, 0)) {
+		t.Fatal("ab dem Keyframe muss es weitergehen")
+	}
+	if !m.stale(pkt(e2e.KindVoice, 0, 0, time.Second)) || m.stale(pkt(e2e.KindVoice, 0, 0, 0)) {
+		t.Fatal("Stimme: alt weg, frisch durch")
+	}
+	if m.stale(pkt(e2e.KindChat, 0, 0, time.Hour)) {
+		t.Fatal("Chat darf nie verworfen werden")
+	}
+}

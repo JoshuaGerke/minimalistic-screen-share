@@ -560,10 +560,14 @@ registerProcessor('mss-player', MssPlayer);`;
   const ICON = {
     mic: '<svg viewBox="0 0 24 24" width="14" height="14"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
     deaf: '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 14v-2a8 8 0 0116 0v2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="13" width="4" height="7" rx="1.5" fill="currentColor"/><rect x="17" y="13" width="4" height="7" rx="1.5" fill="currentColor"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
+    speaker: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 9a4 4 0 010 6M18.5 6.5a7.5 7.5 0 010 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     screen: '<svg viewBox="0 0 24 24" width="14" height="14"><rect x="3" y="4" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 20h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   };
 
-  let openVol = 0;
+  // Die Liste wird nur neu gebaut, wenn sich etwas ändert – die
+  // Sprech-Anzeige (alle 100 ms) setzt nur eine Klasse. Sonst verschwände
+  // der Lautstärkeregler unter der Maus.
+  let openVol = 0, membersSig = '';
   function renderMembers() {
     const box = $('#members');
     if (!box) return;
@@ -575,34 +579,42 @@ registerProcessor('mss-player', MssPlayer);`;
       if (m.id !== me && m.state && m.state.type === 'person') people.push({ id: m.id, ...m.state });
     }
     people.sort((a, b) => a.id - b.id);
+    const canVol = voice.state.joined;
+    for (const p of people) p.sharing = screens.has(p.name) || !!(p.self && status && status.share);
+    const sig = JSON.stringify([joined, canVol, openVol, people.map((p) => [p.id, p.name, p.voice, p.muted, p.deaf, p.sharing])]);
+    if (sig === membersSig) {
+      for (const row of box.querySelectorAll('.member')) row.classList.toggle('speaking', !!speaking.get(Number(row.dataset.id)));
+      return;
+    }
+    membersSig = sig;
     $('#count').textContent = people.length ? String(people.length) : '';
     box.innerHTML = '';
     for (const p of people) {
       const row = el('div', 'member' + (speaking.get(p.id) ? ' speaking' : '') + (p.voice ? ' in-voice' : ''));
-      const av = el('span', 'avatar', (p.name || '?').slice(0, 1).toUpperCase());
-      const name = el('span', 'name', p.name + (p.self ? ' (du)' : ''));
-      row.append(av, name);
+      row.dataset.id = p.id;
+      row.append(el('span', 'avatar', (p.name || '?').slice(0, 1).toUpperCase()), el('span', 'name', p.name + (p.self ? ' (du)' : '')));
       const flags = el('span', 'flags');
-      if (screens.has(p.name) || (p.self && status && status.share)) flags.insertAdjacentHTML('beforeend', `<i class="live" title="teilt den Bildschirm">${ICON.screen}</i>`);
+      if (p.sharing) flags.insertAdjacentHTML('beforeend', `<i class="live" title="teilt den Bildschirm">${ICON.screen}</i>`);
       if (p.voice && p.deaf) flags.insertAdjacentHTML('beforeend', `<i class="off" title="taub">${ICON.deaf}</i>`);
       else if (p.voice && p.muted) flags.insertAdjacentHTML('beforeend', `<i class="off" title="stumm">${ICON.mic}</i>`);
       row.append(flags);
-      if (!p.self && p.voice && voice.state.joined) {
-        row.title = 'Klicken für Lautstärke';
-        row.addEventListener('click', () => { openVol = openVol === p.id ? 0 : p.id; renderMembers(); });
-        if (openVol === p.id) {
-          const vol = el('input');
-          vol.type = 'range'; vol.min = 0; vol.max = 200; vol.step = 5;
-          vol.value = voice.settings.volumes[p.name] ?? 100;
-          vol.addEventListener('click', (e) => e.stopPropagation());
-          vol.addEventListener('input', () => voice.setVolume(p.name, Number(vol.value)));
-          const wrap = el('div', 'member-vol');
-          wrap.append(vol);
-          box.append(row, wrap);
-          continue;
-        }
-      }
       box.append(row);
+      if (p.self || !p.voice || !canVol) continue;
+      const vb = el('button', 'btn icon vol-btn' + (openVol === p.id ? ' on' : ''));
+      vb.type = 'button';
+      vb.title = 'Lautstärke von ' + p.name;
+      vb.innerHTML = ICON.speaker;
+      vb.addEventListener('click', () => { openVol = openVol === p.id ? 0 : p.id; renderMembers(); });
+      row.append(vb);
+      if (openVol !== p.id) continue;
+      const wrap = el('div', 'member-vol');
+      const vol = el('input');
+      vol.type = 'range'; vol.min = 0; vol.max = 200; vol.step = 5;
+      vol.value = voice.settings.volumes[p.name] ?? 100;
+      const pct = el('span', 'dim small', vol.value + ' %');
+      vol.addEventListener('input', () => { voice.setVolume(p.name, Number(vol.value)); pct.textContent = vol.value + ' %'; });
+      wrap.append(vol, pct);
+      box.append(wrap);
     }
     if (!people.length) box.append(el('p', 'dim small', joined ? '' : 'Verbinde…'));
   }
@@ -1060,6 +1072,14 @@ registerProcessor('mss-player', MssPlayer);`;
       box.append(row);
     }
   }
+
+  // Links aus dem Chat im normalen Browser öffnen, nicht im App-Fenster.
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a[target=_blank]');
+    if (!a) return;
+    e.preventDefault();
+    api('/api/openurl', { url: a.href }).catch((err) => toast(err.message));
+  });
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'F11' && status && status.room) { e.preventDefault(); toggleFullscreen(); }

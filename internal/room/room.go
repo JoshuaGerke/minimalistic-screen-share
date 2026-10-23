@@ -59,6 +59,7 @@ type Member struct {
 
 // Server hält die Räume, die dieser PC gerade betreibt.
 type Server struct {
+	Self     string // Kennung dieses Programmstarts, kommt in /healthz zurück
 	log      *log.Logger
 	upgrader websocket.Upgrader
 	mu       sync.Mutex
@@ -82,13 +83,14 @@ type member struct {
 	kind  string
 	since time.Time
 	conn  *websocket.Conn
-	prio  chan []byte
-	bulk  chan []byte
-	files chan []byte
+	prio  chan qitem
+	bulk  chan qitem
+	files chan qitem
 
 	mu      sync.Mutex
 	closed  bool
 	needKey map[uint32]bool // pro Absender: bis zum nächsten Keyframe kein Bild
+	dropKey map[uint32]bool // dasselbe beim Senden, nachdem ein altes Stück verworfen wurde
 }
 
 // New legt einen leeren Relay an.
@@ -158,7 +160,10 @@ func (s *Server) Count(id string) int {
 	return 0
 }
 
-// Handler: /ws für Teilnehmer, /healthz?room=… zum Prüfen, ob der Raum hier läuft.
+// Handler: /ws für Teilnehmer, /healthz?room=… zum Prüfen, ob der Raum hier
+// läuft. Die Antwort ist die Kennung des Programmstarts (Self): Zeigt ein
+// alter Eintrag auf eine Adresse, die inzwischen ein anderer Start benutzt,
+// fällt das so auf.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWS)
@@ -168,7 +173,7 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Raum nicht hier", http.StatusNotFound)
 			return
 		}
-		w.Write([]byte("ok"))
+		w.Write([]byte(s.Self))
 	})
 	return mux
 }
@@ -186,8 +191,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m := &member{conn: conn, kind: join.Kind, since: time.Now(),
-		prio: make(chan []byte, prioQueue), bulk: make(chan []byte, bulkQueue), files: make(chan []byte, fileQueue),
-		needKey: map[uint32]bool{}}
+		prio: make(chan qitem, prioQueue), bulk: make(chan qitem, bulkQueue), files: make(chan qitem, fileQueue),
+		needKey: map[uint32]bool{}, dropKey: map[uint32]bool{}}
 	if m.kind != "media" {
 		m.kind = "person"
 	}
@@ -348,14 +353,29 @@ func (s *Server) relay(rm *Room, from *member, data []byte) {
 
 // enqueue legt ab. evict: bei voller Schlange das Älteste verwerfen statt
 // das Neue (für Ton – lieber ein Knacken als Verzögerung).
-func (m *member) enqueue(data []byte, q chan []byte, evict bool) bool {
+// qitem ist ein Paket in der Warteschlange samt Zeitpunkt – was zu alt ist,
+// fliegt beim Senden raus (siehe stale), damit sich keine Verzögerung aufbaut.
+type qitem struct {
+	data []byte
+	at   time.Time
+}
+
+// Höchstalter in der Warteschlange: Lieber ein Bild oder 20 ms Ton
+// auslassen als dauerhaft hinterherhängen.
+const (
+	maxAgeVideo = 400 * time.Millisecond
+	maxAgeAudio = 250 * time.Millisecond
+)
+
+func (m *member) enqueue(data []byte, q chan qitem, evict bool) bool {
+	it := qitem{data, time.Now()}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return false
 	}
 	select {
-	case q <- data:
+	case q <- it:
 		return true
 	default:
 	}
@@ -365,10 +385,45 @@ func (m *member) enqueue(data []byte, q chan []byte, evict bool) bool {
 		default:
 		}
 		select {
-		case q <- data:
+		case q <- it:
 			return true
 		default:
 		}
+	}
+	return false
+}
+
+// stale: Ist ein Bild- oder Tonpaket zu lange liegen geblieben, wird es
+// nicht mehr gesendet. Fehlt dadurch ein Bildstück, geht es beim nächsten
+// Keyframe weiter.
+func (m *member) stale(it qitem) bool {
+	if len(it.data) < e2e.HeaderLen || it.data[0] == '{' {
+		return false
+	}
+	h, ok := e2e.ParseHeader(it.data)
+	if !ok {
+		return false
+	}
+	age := time.Since(it.at)
+	switch h.Kind {
+	case e2e.KindVideo:
+		// Nach einem verworfenen Stück erst ab dem nächsten Keyframe weiter.
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if age > maxAgeVideo {
+			m.dropKey[h.Sender] = true
+			return true
+		}
+		if m.dropKey[h.Sender] {
+			if h.Flags&e2e.FlagKey != 0 && h.Idx == 0 {
+				delete(m.dropKey, h.Sender)
+				return false
+			}
+			return true
+		}
+		return false
+	case e2e.KindSystem, e2e.KindVoice:
+		return age > maxAgeAudio
 	}
 	return false
 }
@@ -413,7 +468,11 @@ func (m *member) writeLoop() {
 	ping := time.NewTicker(pingInterval)
 	defer ping.Stop()
 	defer m.conn.Close()
-	write := func(data []byte) bool {
+	write := func(it qitem) bool {
+		if m.stale(it) {
+			return true
+		}
+		data := it.data
 		typ := websocket.BinaryMessage
 		if len(data) > 0 && data[0] == '{' {
 			typ = websocket.TextMessage

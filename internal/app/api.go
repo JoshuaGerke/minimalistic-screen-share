@@ -45,6 +45,7 @@ func (a *App) Handler() http.Handler {
 		"/api/openlog":       post(func() { openURL(filepath.Join(config.Dir(), "share.log")) }),
 		"/api/audiosessions": a.handleAudioSessions,
 		"/api/openmixer":     post(func() { openMixer(a.log) }),
+		"/api/openurl":       a.handleOpenURL,
 		"/api/show":          post(a.OpenWindow),
 		"/api/quit":          post(func() { go a.Quit() }),
 	}
@@ -216,6 +217,23 @@ func (a *App) handleShareStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, a.RoomStatus())
+}
+
+// handleOpenURL öffnet einen Link aus dem Chat im Standardbrowser.
+func (a *App) handleOpenURL(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL string `json:"url"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	u, err := url.Parse(body.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		writeError(w, http.StatusBadRequest, "nur http- und https-Links")
+		return
+	}
+	openURL(u.String())
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (a *App) handleAutostart(w http.ResponseWriter, r *http.Request) {
